@@ -14,7 +14,10 @@ uses
 
 const
   ScanlineTStates = 224;
-  AudioChunkFrames = 441 * 5; { must stay >= the audio device's internal period size, or
+  TotalScanlines = 312;
+  TStatesPerFrame = ScanlineTStates * TotalScanlines;
+  SamplesPerFrame = 441; { 22050Hz / 50fps }
+  AudioChunkFrames = SamplesPerFrame * 5; { must stay >= the audio device's internal period size, or
     raylib pads the shortfall with raw zero bytes - which is true silence for signed
     16-bit PCM, so a shortfall now degrades to silence instead of a loud click }
   AudioHigh: CInt16 = CInt16.MaxValue;
@@ -24,16 +27,52 @@ var
   CPU: TZ80;
   Memory: array[0..$ffff] of Byte;
   BorderColorIndex: Byte;
-  Snapshot: String = 'dcs';
+  Snapshot: String = '';
   Cycles: Integer = 0;
   Overshoot: Integer = 0;
-  ABuf: array[0..440] of CInt16;
+  ABuf: array[0..SamplesPerFrame - 1] of CInt16;
   AudioStream: TAudioStream;
   AudioPin: Boolean = False;
-  PrevTiming: Integer = 0;
+  PrevTiming: Integer = 0;   { index of the sample bucket currently being accumulated }
+  PrevT: Integer = 0;        { T-state at which that accumulation last left off }
+  BucketStartT: Integer = 0; { T-state at which the current bucket began }
+  BucketHigh: Integer = 0;   { T-states spent HIGH within the current bucket so far }
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
   Contended: Boolean = False;
+
+{ Advances the audio-sample cursor to absolute T-state NewT, treating AudioPin as having
+  held constant since the last call. Rather than snapshotting one instant per output sample
+  (which aliases high-pitched beeper toggling - e.g. Wham!'s PWM-style tricks - into audible
+  spurious tones), each finished bucket is written as the pin's HIGH duty cycle over its
+  exact T-state span: a boxcar low-pass filter matched to the sample rate. }
+function BucketBoundary(Index: Integer): Integer; inline;
+begin
+  Result := (Index * TStatesPerFrame) div SamplesPerFrame;
+end;
+
+procedure AdvanceAudio(NewT: Integer);
+var
+  NextBoundary, Duration: Integer;
+begin
+  while PrevTiming < SamplesPerFrame do
+  begin
+    NextBoundary := BucketBoundary(PrevTiming + 1);
+    if NextBoundary > NewT then Break;
+
+    if AudioPin then Inc(BucketHigh, NextBoundary - PrevT);
+    Duration := NextBoundary - BucketStartT;
+    ABuf[PrevTiming] := CInt16(AudioLow + (BucketHigh * (Integer(AudioHigh) - AudioLow)) div Duration);
+
+    PrevT := NextBoundary;
+    BucketStartT := NextBoundary;
+    BucketHigh := 0;
+    Inc(PrevTiming);
+  end;
+
+  if AudioPin then Inc(BucketHigh, NewT - PrevT);
+  PrevT := NewT;
+end;
 
 procedure OnHalt(context: Pointer; state: UInt8); cdecl;
 begin
@@ -198,18 +237,12 @@ begin
 end;
 
 procedure OnIOWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
-var
-  Timing: Integer;
 begin
   case address.Bytes[0] of
     $FE:
       begin
         BorderColorIndex := value and %111;
-
-        Timing := (Cycles + CPU.cycles) * 440 div 69888;
-        //Writeln($'{PrevTiming} .. {Timing}');
-        FillWord(ABuf[PrevTiming], Timing - PrevTiming, Word(if AudioPin then AudioHigh else AudioLow));
-        PrevTiming := Timing;
+        AdvanceAudio(Cycles + CPU.cycles);
         AudioPin := value.Bits[4];
       end;
   end;
@@ -533,11 +566,14 @@ begin
       Inc(Frames);
       Cycles := 0;
 
-      FillWord(ABuf[PrevTiming], 441 - PrevTiming, Word(if AudioPin then AudioHigh else AudioLow));
+      AdvanceAudio(TStatesPerFrame);
       PrevTiming := 0;
+      PrevT := 0;
+      BucketStartT := 0;
+      BucketHigh := 0;
 
-      Move(ABuf, AccumBuf[AccumPos], 441 * SizeOf(CInt16));
-      Inc(AccumPos, 441);
+      Move(ABuf, AccumBuf[AccumPos], SamplesPerFrame * SizeOf(CInt16));
+      Inc(AccumPos, SamplesPerFrame);
       if AccumPos >= AudioChunkFrames then
       begin
         if IsAudioStreamProcessed(AudioStream) then

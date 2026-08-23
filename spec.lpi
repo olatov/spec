@@ -96,7 +96,6 @@
     <Units>
       <Unit>
         <Filename Value="spec.lpr"/>
-        <UnitName Value="p"/>
       </Unit>
     </Units>
   </ProjectOptions>
