@@ -454,7 +454,7 @@ var
   Video: TTexture2D;
   Colors: PColorB;
   ROM: TBytesStream;
-  Row, I, Addr, Col, Offset: Integer;
+  Row, I, Addr, Col, Offset, J: Integer;
   Data, Attribute: Byte;
   Palette: array[0..15] of TColorB;
   InkColorIndex, PaperColorIndex: Byte;
@@ -462,6 +462,13 @@ var
   Frames: QWord = 0;
   Paused: Boolean = False;
   Fullscreen: Boolean = False;
+
+  procedure DrawBorderLine(ALine: Integer); inline;
+  begin
+    if ALine >= Image.height then Exit;
+    ImageDrawLine(@Image, 0, ALine, 351, ALine, Palette[BorderColorIndex]);
+  end;
+
 begin
   if not LoadLibrary then Halt(1);
 
@@ -581,23 +588,35 @@ begin
         AccumPos := 0;
       end;
 
-      Run(ScanlineTStates * 8);  { VBlank }
+      Run((ScanlineTStates * 8) - 32);  { VBlank }
       z80_int(@CPU, True);
       Run(32);
       z80_int(@CPU, False);
-      Run((ScanlineTStates * 56) - 32); { Top border + INT }
 
-      ImageDrawRectangle(@Image, 0, 0, 352, 288, Palette[BorderColorIndex and $07]);
+      Run((ScanlineTStates * 8)); { "Unvisible" top border }
+
+      Row := 0;
+
+      { Top border }
+      for I := 1 to 48 do
+      begin
+        DrawBorderLine(Row);
+        Run(ScanlineTStates);
+        Inc(Row);
+      end;
+
+      //ImageDrawRectangle(@Image, 0, 0, 352, 288, Palette[BorderColorIndex and $07]);
 
       FlashPhase := Odd(Frames div 16);
 
       Contended := True;
-      for Row := 0 to 191 do
+      for I := 0 to 191 do
       begin
+        DrawBorderLine(Row);
         Offset := 16384;
-        Inc(Offset, (Row div 64) * 2048);
-        Inc(Offset, ((Row mod 64) div 8) * 32);
-        Inc(Offset, (Row mod 8) * 256);
+        Inc(Offset, (I div 64) * 2048);
+        Inc(Offset, ((I mod 64) div 8) * 32);
+        Inc(Offset, (I mod 8) * 256);
 
         Col := 0;
         for Addr := Offset to Offset + 31 do
@@ -606,7 +625,7 @@ begin
           if (Col mod 8) = 0 then
           begin
             //Attribute := 7 shl 3;
-            Attribute := Memory[22528 + ((Row div 8) * 32) + (Col div 8)];
+            Attribute := Memory[22528 + ((I div 8) * 32) + (Col div 8)];
             Flash := Attribute.Bits[7];
             InkColorIndex := Attribute and %111;
             InkColorIndex.Bits[3] := Attribute.Bits[6];
@@ -617,19 +636,26 @@ begin
               Swap<Byte>(InkColorIndex, PaperColorIndex);
           end;
 
-          for I := 7 downto 0 do
+          for J := 7 downto 0 do
           begin
             ImageDrawPixel(@Image,
-              Col + 50, Row + 50,
-              Palette[if Data.Bits[I] then InkColorIndex else PaperColorIndex]);
+              Col + 48, Row,
+              Palette[if Data.Bits[J] then InkColorIndex else PaperColorIndex]);
             Inc(Col);
           end;
         end;
         Run(ScanlineTStates);
+        Inc(Row);
       end;
       Contended := False;
 
-      Run(ScanlineTStates * 56); { Bottom border }
+      { Bottom border }
+      for I := 1 to 56 do
+      begin
+        DrawBorderLine(Row);
+        Run(ScanlineTStates);
+        Inc(Row);
+      end;
 
       Colors := LoadImageColors(Image);
       UpdateTexture(Video, Colors);
