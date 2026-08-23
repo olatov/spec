@@ -1,0 +1,13 @@
+*.res
+*.o
+*.lps
+*.fpc
+*.exe
+lib/
+*.a
+*.dylib
+*.so
+*.z80
+*.tap
+*.tzx
+/spec
