@@ -12,14 +12,28 @@ uses
   Raylib, Raymath,
   Z80;
 
+const
+  ScanlineTStates = 224;
+  AudioChunkFrames = 441 * 5; { must stay >= the audio device's internal period size, or
+    raylib pads the shortfall with raw zero bytes - which is true silence for signed
+    16-bit PCM, so a shortfall now degrades to silence instead of a loud click }
+  AudioHigh: CInt16 = CInt16.MaxValue;
+  AudioLow: CInt16 = CInt16.MinValue;
+
 var
   CPU: TZ80;
   Memory: array[0..$ffff] of Byte;
   BorderColorIndex: Byte;
-  Snapshot: String = '';
-
-const
-  ScanlineTStates = 224;
+  Snapshot: String = 'dcs';
+  Cycles: Integer = 0;
+  Overshoot: Integer = 0;
+  ABuf: array[0..440] of CInt16;
+  AudioStream: TAudioStream;
+  AudioPin: Boolean = False;
+  PrevTiming: Integer = 0;
+  AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
+  AccumPos: Integer = 0;
+  Contended: Boolean = False;
 
 procedure OnHalt(context: Pointer; state: UInt8); cdecl;
 begin
@@ -42,7 +56,8 @@ function OnMemoryRead(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
   { WriteLn('MEMORY READ addr ', address); }
   Result := Memory[address];
-  if InRange(Address, $4000, $7FFF) then CPU.cycles := CPU.cycles + 2;
+  if Contended and InRange(Address, $4000, $7FFF) then
+    CPU.cycles := CPU.cycles + 1;
 end;
 
 procedure OnMemoryWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
@@ -50,7 +65,8 @@ begin
   { WriteLn('MEMORY WRITE addr ', address, ', val ', value); }
   if address < $4000 then Exit; { ROM }
   Memory[address] := value;
-  if InRange(Address, $4000, $7FFF) then CPU.cycles := CPU.cycles + 2;
+  if Contended and InRange(Address, $4000, $7FFF) then
+    CPU.cycles := CPU.cycles + 1;
 end;
 
 function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
@@ -182,12 +198,19 @@ begin
 end;
 
 procedure OnIOWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
+var
+  Timing: Integer;
 begin
   case address.Bytes[0] of
     $FE:
       begin
-        BorderColorIndex := value;
-        { Writeln('IO: ', IntToHex(address, 4), ', val ', value); }
+        BorderColorIndex := value and %111;
+
+        Timing := (Cycles + CPU.cycles) * 440 div 69888;
+        //Writeln($'{PrevTiming} .. {Timing}');
+        FillWord(ABuf[PrevTiming], Timing - PrevTiming, Word(if AudioPin then AudioHigh else AudioLow));
+        PrevTiming := Timing;
+        AudioPin := value.Bits[4];
       end;
   end;
 end;
@@ -242,6 +265,17 @@ end;
 procedure LoadSNA(Z80: PZ80; Filename: String);
 begin
 
+end;
+
+procedure Run(ACycles: Integer);
+var
+  Requested, Fact: Integer;
+begin
+  Requested := Max(ACycles - Overshoot, 0);
+  Fact := z80_run(@CPU, Requested);
+  //Writeln($'CPU requested: {ACycles}, fact: {Fact}');
+  Overshoot := Fact - Requested;
+  Inc(Cycles, Fact);
 end;
 
 procedure LoadZ80(Z80: PZ80; Filename: String);
@@ -337,7 +371,7 @@ begin
     if Compressed then
       DecodeBlock(16384, Stream.Size - 4)
     else
-      DecodeBlock(16384, Stream.Size);
+      Stream.Read(Memory[16384], Stream.Size - Stream.Position);
   end else
   begin
     { Version 2/3: PC=0 in the base header is the marker that an extended
@@ -395,8 +429,6 @@ var
   Frames: QWord = 0;
   Paused: Boolean = False;
   Fullscreen: Boolean = False;
-  AUList: TAutomationEventList;
-  RunningCycles: SizeUInt = 0;
 begin
   if not LoadLibrary then Halt(1);
 
@@ -424,13 +456,6 @@ begin
     GetColor($FFFF00FF),
     GetColor($FFFFFFFF)
   ];
-
-  {
-  Screen := TBytesStream.Create;
-  Screen.LoadFromFile('tapper.scr');
-  Move(Screen.Bytes[0], Memory[16384], Screen.Size);
-  FreeAndNil(Screen);
-  }
 
   FillByte(CPU, SizeOf(CPU), 0);
 
@@ -465,7 +490,7 @@ begin
     illegal := @OnIllegal;
   end;
 
-  SetTraceLogLevel(LOG_ERROR);
+  //SetTraceLogLevel(LOG_ERROR);
 
   //SetConfigFlags(FLAG_WINDOW_HIGHDPI);
   InitWindow(720, 576, 'Spec');
@@ -476,6 +501,19 @@ begin
 
   Image := GenImageColor(352, 288, BLACK);
   Video := LoadTextureFromImage(Image);
+
+  InitAudioDevice;
+
+  SetAudioStreamBufferSizeDefault(AudioChunkFrames);
+  AudioStream := LoadAudioStream(22050, 16, 1);
+  SetAudioStreamVolume(AudioStream, 0.75);
+  PlayAudioStream(AudioStream);
+
+  FillByte(AccumBuf, SizeOf(AccumBuf), 0); { 0 = silence for signed 16-bit PCM }
+
+  for I := 1 to 3 do
+    if IsAudioStreamProcessed(AudioStream) then
+      UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
 
   while not WindowShouldClose do
   begin
@@ -493,17 +531,31 @@ begin
     if not Paused then
     begin
       Inc(Frames);
+      Cycles := 0;
 
-      z80_run(@CPU, ScanlineTStates * 8);  { VBlank }
+      FillWord(ABuf[PrevTiming], 441 - PrevTiming, Word(if AudioPin then AudioHigh else AudioLow));
+      PrevTiming := 0;
+
+      Move(ABuf, AccumBuf[AccumPos], 441 * SizeOf(CInt16));
+      Inc(AccumPos, 441);
+      if AccumPos >= AudioChunkFrames then
+      begin
+        if IsAudioStreamProcessed(AudioStream) then
+          UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
+        AccumPos := 0;
+      end;
+
+      Run(ScanlineTStates * 8);  { VBlank }
       z80_int(@CPU, True);
-      z80_run(@CPU, 32);
+      Run(32);
       z80_int(@CPU, False);
-      z80_run(@CPU, (ScanlineTStates * 56) - 32); { Top border + INT }
+      Run((ScanlineTStates * 56) - 32); { Top border + INT }
 
       ImageDrawRectangle(@Image, 0, 0, 352, 288, Palette[BorderColorIndex and $07]);
 
       FlashPhase := Odd(Frames div 16);
 
+      Contended := True;
       for Row := 0 to 191 do
       begin
         Offset := 16384;
@@ -537,10 +589,11 @@ begin
             Inc(Col);
           end;
         end;
-        z80_run(@CPU, ScanlineTStates);
+        Run(ScanlineTStates);
       end;
+      Contended := False;
 
-      z80_run(@CPU, ScanlineTStates * 56); { Bottom border }
+      Run(ScanlineTStates * 56); { Bottom border }
 
       Colors := LoadImageColors(Image);
       UpdateTexture(Video, Colors);
@@ -561,6 +614,10 @@ begin
     { DrawFPS(10, 10); }
     EndDrawing;
   end;
+
+  StopAudioStream(AudioStream);
+  UnloadAudioStream(AudioStream);
+  CloseAudioDevice;
 
   UnloadImage(Image);
   UnloadTexture(Video);
