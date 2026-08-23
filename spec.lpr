@@ -25,7 +25,7 @@ const
 
 var
   CPU: TZ80;
-  Memory: array[0..$ffff] of Byte;
+  Memory: array[4000..$ffff] of Byte;
   BorderColorIndex: Byte;
   Snapshot: String = '';
   Cycles: Integer = 0;
@@ -40,6 +40,8 @@ var
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
   Contended: Boolean = False;
+  {$embedstr ShaderText 'shader.fs'}
+  {$embedbytes ROMBytes '48.rom'}
 
 { Advances the audio-sample cursor to absolute T-state NewT, treating AudioPin as having
   held constant since the last call. Rather than snapshotting one instant per output sample
@@ -94,7 +96,7 @@ end;
 function OnMemoryRead(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
   { WriteLn('MEMORY READ addr ', address); }
-  Result := Memory[address];
+  Result := if address < $4000 then ROMBytes[address] else Memory[address];
   if Contended and InRange(Address, $4000, $7FFF) then
     CPU.cycles := CPU.cycles + 1;
 end;
@@ -300,7 +302,7 @@ begin
 
 end;
 
-procedure Run(ACycles: Integer);
+procedure Run(ACycles: Integer); inline;
 var
   Requested, Fact: Integer;
 begin
@@ -453,8 +455,7 @@ var
   Image: TImage;
   Video: TTexture2D;
   Colors: PColorB;
-  ROM: TBytesStream;
-  Row, I, Addr, Col, Offset, J: Integer;
+  Row, I, Addr, Col, Offset, J, LinesLoc: Integer;
   Data, Attribute: Byte;
   Palette: array[0..15] of TColorB;
   InkColorIndex, PaperColorIndex: Byte;
@@ -462,6 +463,10 @@ var
   Frames: QWord = 0;
   Paused: Boolean = False;
   Fullscreen: Boolean = False;
+  LinesCount: Single = 288;
+  Shader: TShader;
+  ScanlinesEnabled: Int32 = 1;
+  GrayscaleEnabled: Int32 = 0;
 
   procedure DrawBorderLine(ALine: Integer); inline;
   begin
@@ -470,12 +475,11 @@ var
   end;
 
 begin
-  if not LoadLibrary then Halt(1);
-
-  ROM := TBytesStream.Create;
-  ROM.LoadFromFile('48.rom');
-  Move(ROM.Bytes[0], Memory[0], ROM.Size);
-  FreeAndNil(ROM);
+  if not LoadLibrary then
+  begin
+    WriteLn('Fatal: failed to load Z80 library.');
+    Halt(1);
+  end;
 
   Palette := [
     GetColor($000000FF),
@@ -530,14 +534,32 @@ begin
     illegal := @OnIllegal;
   end;
 
-  //SetTraceLogLevel(LOG_ERROR);
+  SetTraceLogLevel(LOG_ERROR);
 
   //SetConfigFlags(FLAG_WINDOW_HIGHDPI);
   InitWindow(720, 576, 'Spec');
   SetTargetFPS(50);
 
+  Fullscreen := True;
+  ToggleBorderlessWindowed;
+  HideCursor;
+
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
+
+  Shader := LoadShaderFromMemory(Nil, @ShaderText[1]);
+
+  LinesCount := 288 - 32;
+  LinesLoc := GetShaderLocation(Shader, 'lines');
+  SetShaderValue(Shader, LinesLoc, @LinesCount, SHADER_UNIFORM_FLOAT);
+
+  SetShaderValue(Shader,
+    GetShaderLocation(Shader, 'enableGrayscale'),
+    @GrayscaleEnabled, SHADER_UNIFORM_INT);
+
+  SetShaderValue(Shader,
+    GetShaderLocation(Shader, 'enableScanlines'),
+    @ScanlinesEnabled, SHADER_UNIFORM_INT);
 
   Image := GenImageColor(352, 288, BLACK);
   Video := LoadTextureFromImage(Image);
@@ -546,7 +568,7 @@ begin
 
   SetAudioStreamBufferSizeDefault(AudioChunkFrames);
   AudioStream := LoadAudioStream(22050, 16, 1);
-  SetAudioStreamVolume(AudioStream, 0.75);
+  SetAudioStreamVolume(AudioStream, 0.25);
   PlayAudioStream(AudioStream);
 
   FillByte(AccumBuf, SizeOf(AccumBuf), 0); { 0 = silence for signed 16-bit PCM }
@@ -668,11 +690,13 @@ begin
 
     BeginDrawing;
     ClearBackground(BLACK);
+    BeginShaderMode(Shader);
     DrawTexturePro(
       Target.Texture,
-      RectangleCreate(0, 0, Target.texture.width, -Target.texture.height),
+      RectangleCreate(16, 16, Target.texture.width - 32, -Target.texture.height + 32),
       RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0, GetScreenHeight * 1.333, GetScreenHeight),
       Vector2Zero, 0, WHITE);
+    EndShaderMode;
     { DrawFPS(10, 10); }
     EndDrawing;
   end;
@@ -681,6 +705,7 @@ begin
   UnloadAudioStream(AudioStream);
   CloseAudioDevice;
 
+  UnloadShader(Shader);
   UnloadImage(Image);
   UnloadTexture(Video);
   UnloadRenderTexture(Target);

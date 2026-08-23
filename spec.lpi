@@ -96,7 +96,10 @@
     <Units>
       <Unit>
         <Filename Value="spec.lpr"/>
-        <UnitName Value="ram"/>
+        <UnitName Value="Spec"/>
+      </Unit>
+      <Unit>
+        <Filename Value="shader.fs"/>
       </Unit>
     </Units>
   </ProjectOptions>
