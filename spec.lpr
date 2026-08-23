@@ -465,8 +465,12 @@ var
   Fullscreen: Boolean = False;
   LinesCount: Single = 288;
   Shader: TShader;
-  ScanlinesEnabled: Int32 = 1;
+  ScanlinesEnabled: Int32 = 0;
   GrayscaleEnabled: Int32 = 0;
+  CurvatureEnabled: Int32 = 0;
+  MaskEnabled: Int32 = 0;
+  Curvature: Single = 7.5;
+  OldTV: Boolean = False;
 
   procedure DrawBorderLine(ALine: Integer); inline;
   begin
@@ -546,6 +550,7 @@ begin
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(Target.texture, TEXTURE_WRAP_CLAMP);
 
   Shader := LoadShaderFromMemory(Nil, @ShaderText[1]);
 
@@ -560,6 +565,18 @@ begin
   SetShaderValue(Shader,
     GetShaderLocation(Shader, 'enableScanlines'),
     @ScanlinesEnabled, SHADER_UNIFORM_INT);
+
+  SetShaderValue(Shader,
+    GetShaderLocation(Shader, 'enableCurvature'),
+    @CurvatureEnabled, SHADER_UNIFORM_INT);
+
+  SetShaderValue(Shader,
+    GetShaderLocation(Shader, 'enableMask'),
+    @MaskEnabled, SHADER_UNIFORM_INT);
+
+  SetShaderValue(Shader,
+    GetShaderLocation(Shader, 'curvature'),
+    @Curvature, SHADER_UNIFORM_FLOAT);
 
   Image := GenImageColor(352, 288, BLACK);
   Video := LoadTextureFromImage(Image);
@@ -579,6 +596,26 @@ begin
 
   while not WindowShouldClose do
   begin
+    if IsKeyPressed(KEY_F9) then
+    begin
+      OldTV := not OldTV;
+      ScanlinesEnabled := IfThen(OldTV, 1, 0);
+      MaskEnabled := IfThen(OldTV, 1, 0);
+      CurvatureEnabled := IfThen(OldTV, 1, 0);
+
+      SetShaderValue(Shader,
+        GetShaderLocation(Shader, 'enableScanlines'),
+        @ScanlinesEnabled, SHADER_UNIFORM_INT);
+
+      SetShaderValue(Shader,
+        GetShaderLocation(Shader, 'enableCurvature'),
+        @CurvatureEnabled, SHADER_UNIFORM_INT);
+
+      SetShaderValue(Shader,
+        GetShaderLocation(Shader, 'enableMask'),
+        @MaskEnabled, SHADER_UNIFORM_INT);
+    End;
+
     if IsKeyPressed(KEY_F10) then Paused := not Paused;
     if IsKeyPressed(KEY_F11) then
     begin
