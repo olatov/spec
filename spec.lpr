@@ -12,6 +12,15 @@ uses
   Raylib, Raymath,
   Z80;
 
+type
+  TJoystickType = (jkNone, jkKempston, jkCursor);
+  TJoystick = record
+    Type_: TJoystickType;
+    Keys: record
+      Left, Right, Up, Down, Fire1, Fire2: TKeyboardKey;
+    end;
+  end;
+
 const
   ScanlineTStates = 224;
   TotalScanlines = 312;
@@ -33,6 +42,10 @@ var
   ABuf: array[0..SamplesPerFrame - 1] of CInt16;
   AudioStream: TAudioStream;
   AudioPin: Boolean = False;
+  OSD: record
+    Text: String;
+    Lifetime: Double;
+  end;
   PrevTiming: Integer = 0;   { index of the sample bucket currently being accumulated }
   PrevT: Integer = 0;        { T-state at which that accumulation last left off }
   BucketStartT: Integer = 0; { T-state at which the current bucket began }
@@ -40,6 +53,7 @@ var
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
   Contended: Boolean = False;
+  Joystick: TJoystick;
   {$embedstr ShaderText 'shader.fs'}
   {$embedbytes ROMBytes '48.rom'}
 
@@ -160,7 +174,11 @@ function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
       Data.Bits[1] := IsKeyDown(KEY_TWO);
       Data.Bits[2] := IsKeyDown(KEY_THREE);
       Data.Bits[3] := IsKeyDown(KEY_FOUR);
-      Data.Bits[4] := IsKeyDown(KEY_FIVE) or IsKeyDown(KEY_LEFT);
+      Data.Bits[4] := IsKeyDown(KEY_FIVE);
+
+      if Joystick.Type_ = jkCursor then
+        Data.Bits[4] := Data.Bits[4] or IsKeyDown(KEY_LEFT);
+
       Result := Result or Data;
     end;
 
@@ -169,9 +187,18 @@ function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
       { $EFFE }
       Data.Bits[0] := IsKeyDown(KEY_ZERO) or IsKeyDown(KEY_BACKSPACE);
       Data.Bits[1] := IsKeyDown(KEY_NINE);
-      Data.Bits[2] := IsKeyDown(KEY_EIGHT) or IsKeyDown(KEY_RIGHT);
-      Data.Bits[3] := IsKeyDown(KEY_SEVEN) or IsKeyDown(KEY_UP);
-      Data.Bits[4] := IsKeyDown(KEY_SIX) or IsKeyDown(KEY_DOWN);
+      Data.Bits[2] := IsKeyDown(KEY_EIGHT);
+      Data.Bits[3] := IsKeyDown(KEY_SEVEN);
+      Data.Bits[4] := IsKeyDown(KEY_SIX);
+
+      if Joystick.Type_ = jkCursor then
+      begin
+        Data.Bits[0] := Data.Bits[0] or IsKeyDown(Joystick.Keys.Fire1);
+        Data.Bits[2] := Data.Bits[2] or IsKeyDown(Joystick.Keys.Right);
+        Data.Bits[3] := Data.Bits[3] or IsKeyDown(Joystick.Keys.Up);
+        Data.Bits[4] := Data.Bits[4] or IsKeyDown(Joystick.Keys.Down);
+      end;
+
       Result := Result or Data;
     end;
 
@@ -221,21 +248,28 @@ function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
   function PollKempston: Byte;
   begin
     Result := 0;
-    Result.Bits[0] := IsKeyDown(KEY_RIGHT);
-    Result.Bits[1] := IsKeyDown(KEY_LEFT);
-    Result.Bits[2] := IsKeyDown(KEY_DOWN);
-    Result.Bits[3] := IsKeyDown(KEY_UP);
-    Result.Bits[4] := IsKeyDown(KEY_LEFT_ALT);
-    Result.Bits[5] := IsKeyDown(KEY_SPACE);
+    Result.Bits[0] := IsKeyDown(Joystick.Keys.Right);
+    Result.Bits[1] := IsKeyDown(Joystick.Keys.Left);
+    Result.Bits[2] := IsKeyDown(Joystick.Keys.Down);
+    Result.Bits[3] := IsKeyDown(Joystick.Keys.Up);
+    Result.Bits[4] := IsKeyDown(Joystick.Keys.Fire1);
+    Result.Bits[5] := IsKeyDown(Joystick.Keys.Fire2);
   end;
 
 begin
   { WriteLn('IO READ addr ', IntToHex(address, 4)); }
 
-  if Odd(address) then
-    Result := PollKempston
-  else
+  if not Odd(address) then
+  begin
     Result := PollKeyboard(Hi(address));
+    Exit;
+  end;
+
+  case Joystick.Type_ of
+    jkKempston: Result := PollKempston
+  else
+    Result := $FF;
+  end;
 end;
 
 procedure OnIOWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
@@ -449,6 +483,12 @@ begin
   end;
 end;
 
+procedure SetOSD(AText: String; ADuration: Double = 2);
+begin
+  OSD.Text := AText;
+  OSD.Lifetime := GetTime + ADuration;
+end;
+
 procedure Main;
 var
   Target: TRenderTexture2D;
@@ -465,12 +505,13 @@ var
   Fullscreen: Boolean = False;
   LinesCount: Single = 288;
   Shader: TShader;
-  ScanlinesEnabled: Int32 = 0;
+  ScanlinesEnabled: Int32 = 1;
   GrayscaleEnabled: Int32 = 0;
-  CurvatureEnabled: Int32 = 0;
-  MaskEnabled: Int32 = 0;
+  CurvatureEnabled: Int32 = 1;
+  MaskEnabled: Int32 = 1;
   Curvature: Single = 7.5;
-  OldTV: Boolean = False;
+  OldTV: Boolean = True;
+  S: String;
 
   procedure DrawBorderLine(ALine: Integer); inline;
   begin
@@ -536,6 +577,20 @@ begin
     reti := @OnRETI;
     retn := @OnRETN;
     illegal := @OnIllegal;
+  end;
+
+  with Joystick do
+  begin
+    Type_ := jkKempston;
+    with Joystick.Keys do
+    begin
+      Left := KEY_LEFT;
+      Right := KEY_RIGHT;
+      Up := KEY_UP;
+      Down := KEY_DOWN;
+      Fire1 := KEY_LEFT_ALT;
+      Fire2 := KEY_SPACE;
+    end;
   end;
 
   SetTraceLogLevel(LOG_ERROR);
@@ -614,7 +669,22 @@ begin
       SetShaderValue(Shader,
         GetShaderLocation(Shader, 'enableMask'),
         @MaskEnabled, SHADER_UNIFORM_INT);
-    End;
+    end;
+
+    if IsKeyPressed(KEY_F7) then
+    begin
+      Joystick.Type_ := if Joystick.Type_ <> High(TJoystickType)
+        then Succ(Joystick.Type_)
+        else Low(TJoystickType);
+
+      case Joystick.Type_ of
+        jkNone: S := 'Off';
+        jkKempston: S := 'Kempston';
+        jkCursor: S := 'Cursor';
+      end;
+
+      SetOSD($'Joystick: {S}');
+    end;
 
     if IsKeyPressed(KEY_F10) then Paused := not Paused;
     if IsKeyPressed(KEY_F11) then
@@ -723,6 +793,11 @@ begin
 
     BeginTextureMode(Target);
     DrawTexture(Video, 0, 0, WHITE);
+    if not OSD.Text.IsEmpty then
+      if GetTime < OSD.Lifetime then
+        DrawText(PAnsiChar(OSD.Text), 18, 18, 16, ORANGE)
+      else
+        OSD.Text := '';
     EndTextureMode;
 
     BeginDrawing;
@@ -735,6 +810,7 @@ begin
       Vector2Zero, 0, WHITE);
     EndShaderMode;
     { DrawFPS(10, 10); }
+
     EndDrawing;
   end;
 
