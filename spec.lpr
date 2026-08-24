@@ -511,12 +511,44 @@ var
   MaskEnabled: Int32 = 1;
   Curvature: Single = 7.5;
   OldTV: Boolean = True;
+  TVMode: Integer = %0111;
   S: String;
+  C: TColorB;
 
   procedure DrawBorderLine(ALine: Integer); inline;
   begin
     if ALine >= Image.height then Exit;
     ImageDrawLine(@Image, 0, ALine, 351, ALine, Palette[BorderColorIndex]);
+  end;
+
+  procedure SetTVMode(AMode: Integer);
+  var
+    Value: CInt32;
+  begin
+    Value := IfThen(AMode.Bits[0], 1, 0);
+    SetShaderValue(Shader,
+      GetShaderLocation(Shader, 'enableMask'),
+      @Value, SHADER_UNIFORM_INT);
+
+    Value := IfThen(AMode.Bits[1], 1, 0);
+    SetShaderValue(Shader,
+      GetShaderLocation(Shader, 'enableScanlines'),
+      @Value, SHADER_UNIFORM_INT);
+
+    Value := IfThen(AMode.Bits[2], 1, 0);
+    SetShaderValue(Shader,
+      GetShaderLocation(Shader, 'enableCurvature'),
+      @Value, SHADER_UNIFORM_INT);
+
+    Value := IfThen(AMode.Bits[3], 1, 0);
+    SetShaderValue(Shader,
+      GetShaderLocation(Shader, 'enableGrayscale'),
+      @Value, SHADER_UNIFORM_INT);
+
+
+    SetShaderValue(Shader,
+      GetShaderLocation(Shader, 'curvature'),
+      @Curvature, SHADER_UNIFORM_FLOAT);
   end;
 
 begin
@@ -545,6 +577,13 @@ begin
     GetColor($FFFF00FF),
     GetColor($FFFFFFFF)
   ];
+
+  for I := 0 to 15 do
+  begin
+    C := Palette[I];
+    //Palette[I] := ColorCreate(C.b, C.g, C.r, C.a);
+    Palette[I] := ColorContrast(C, -0.2);
+  end;
 
   FillByte(CPU, SizeOf(CPU), 0);
 
@@ -613,25 +652,7 @@ begin
   LinesLoc := GetShaderLocation(Shader, 'lines');
   SetShaderValue(Shader, LinesLoc, @LinesCount, SHADER_UNIFORM_FLOAT);
 
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableGrayscale'),
-    @GrayscaleEnabled, SHADER_UNIFORM_INT);
-
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableScanlines'),
-    @ScanlinesEnabled, SHADER_UNIFORM_INT);
-
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableCurvature'),
-    @CurvatureEnabled, SHADER_UNIFORM_INT);
-
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableMask'),
-    @MaskEnabled, SHADER_UNIFORM_INT);
-
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'curvature'),
-    @Curvature, SHADER_UNIFORM_FLOAT);
+  SetTVMode(TVMode);
 
   Image := GenImageColor(352, 288, BLACK);
   Video := LoadTextureFromImage(Image);
@@ -653,22 +674,9 @@ begin
   begin
     if IsKeyPressed(KEY_F9) then
     begin
-      OldTV := not OldTV;
-      ScanlinesEnabled := IfThen(OldTV, 1, 0);
-      MaskEnabled := IfThen(OldTV, 1, 0);
-      CurvatureEnabled := IfThen(OldTV, 1, 0);
-
-      SetShaderValue(Shader,
-        GetShaderLocation(Shader, 'enableScanlines'),
-        @ScanlinesEnabled, SHADER_UNIFORM_INT);
-
-      SetShaderValue(Shader,
-        GetShaderLocation(Shader, 'enableCurvature'),
-        @CurvatureEnabled, SHADER_UNIFORM_INT);
-
-      SetShaderValue(Shader,
-        GetShaderLocation(Shader, 'enableMask'),
-        @MaskEnabled, SHADER_UNIFORM_INT);
+      TVMode := (TVMode + 1) and $0F;
+      SetTVMode(TVMode);
+      SetOSD($'TV mode: {TVMode}');
     end;
 
     if IsKeyPressed(KEY_F6) then
