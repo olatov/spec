@@ -47,7 +47,7 @@ void main() {
     if (enableScanlines != 0) {
         // Smooth sinusoidal scanlines instead of a per-texel odd/even check,
         // so they hold up under the upscale from source lines to screen pixels
-        float scan = 0.98 + 0.02 * cos(uv.y * lines * 3.14159265);
+        float scan = 0.99 + 0.02 * cos(uv.y * lines * 3.14159265);
         color.rgb *= scan;
     }
 
@@ -60,7 +60,7 @@ void main() {
         // mask out if a texel ever shrinks below ~1 output pixel.
         float texelX = uv.x * float(textureSize(texture0, 0).x);
         float t = texelX * 6.28318530718;
-        vec3 mask = 0.5 + 0.5 * cos(t - vec3(0.0, 2.09439510239, 4.18879020479));
+        vec3 mask = 0.8 + 0.2 * cos(t - vec3(0.0, 2.09439510239, 4.18879020479));
 
         float aa = fwidth(t);
         float fade = clamp(1.0 - aa / 3.14159265, 0.0, 1.0);
