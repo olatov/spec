@@ -671,7 +671,7 @@ begin
         @MaskEnabled, SHADER_UNIFORM_INT);
     end;
 
-    if IsKeyPressed(KEY_F7) then
+    if IsKeyPressed(KEY_F6) then
     begin
       Joystick.Type_ := if Joystick.Type_ <> High(TJoystickType)
         then Succ(Joystick.Type_)
