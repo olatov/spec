@@ -13,6 +13,16 @@ uses
   Z80;
 
 type
+  { Ink/paper colour pair already resolved from one attribute byte, indexed by
+    pixel bit: [0] = paper, [1] = ink. }
+  TPixelPair = array[0..1] of TColorB;
+  TAttrTable = array[0..255] of TPixelPair;
+  PAttrTable = ^TAttrTable;
+
+  { The raylib image's raw R8G8B8A8 buffer, addressed directly. }
+  TPixels = array[0..(352 * 288) - 1] of TColorB;
+  PPixels = ^TPixels;
+
   TJoystickType = (jkNone, jkKempston, jkCursor);
   TJoystick = record
     Type_: TJoystickType;
@@ -22,6 +32,8 @@ type
   end;
 
 const
+  ImageWidth = 352;
+  ImageHeight = 288;
   ScanlineTStates = 224;
   TotalScanlines = 312;
   TStatesPerFrame = ScanlineTStates * TotalScanlines;
@@ -494,12 +506,16 @@ var
   Target: TRenderTexture2D;
   Image: TImage;
   Video: TTexture2D;
-  Colors: PColorB;
-  Row, I, Addr, Col, Offset, J, LinesLoc: Integer;
-  Data, Attribute: Byte;
+  Pixels: PPixels;
+  Row, I, Col, Offset, AttrOffset, PixelIndex, LinesLoc: Integer;
+  Data: Byte;
   Palette: array[0..15] of TColorB;
-  InkColorIndex, PaperColorIndex: Byte;
-  Flash, FlashPhase: Boolean;
+  { One resolved colour pair per attribute byte, per FLASH phase: the whole
+    ink/paper/bright/flash decode collapses into a single table lookup. }
+  AttrColors: array[0..1] of TAttrTable;
+  AttrTable: PAttrTable;
+  Pair: ^TPixelPair;
+  FlashPhase: Boolean;
   Frames: QWord = 0;
   Paused: Boolean = False;
   Fullscreen: Boolean = False;
@@ -517,8 +533,30 @@ var
 
   procedure DrawBorderLine(ALine: Integer); inline;
   begin
-    if ALine >= Image.height then Exit;
-    ImageDrawLine(@Image, 0, ALine, 351, ALine, Palette[BorderColorIndex]);
+    if ALine >= ImageHeight then Exit;
+    FillDWord(Pixels^[ALine * ImageWidth], ImageWidth,
+      PDWord(@Palette[BorderColorIndex])^);
+  end;
+
+  { Resolves every attribute byte into its ink/paper colour pair, for both FLASH
+    phases. Must be rerun if Palette changes. }
+  procedure BuildAttrColors;
+  var
+    Phase, Attribute, Bright, InkIndex, PaperIndex: Integer;
+  begin
+    for Phase := 0 to 1 do
+      for Attribute := 0 to 255 do
+      begin
+        Bright := (Attribute shr 6) and 1;
+        InkIndex := (Attribute and %111) or (Bright shl 3);
+        PaperIndex := ((Attribute shr 3) and %111) or (Bright shl 3);
+
+        if (Attribute.Bits[7]) and (Phase = 1) then
+          Swap<Integer>(InkIndex, PaperIndex);
+
+        AttrColors[Phase][Attribute][0] := Palette[PaperIndex];
+        AttrColors[Phase][Attribute][1] := Palette[InkIndex];
+      end;
   end;
 
   procedure SetTVMode(AMode: Integer);
@@ -584,6 +622,8 @@ begin
     //Palette[I] := ColorCreate(C.b, C.g, C.r, C.a);
     Palette[I] := ColorContrast(C, -0.2);
   end;
+
+  BuildAttrColors;
 
   FillByte(CPU, SizeOf(CPU), 0);
 
@@ -654,7 +694,8 @@ begin
 
   SetTVMode(TVMode);
 
-  Image := GenImageColor(352, 288, BLACK);
+  Image := GenImageColor(ImageWidth, ImageHeight, BLACK);
+  Pixels := Image.data;
   Video := LoadTextureFromImage(Image);
 
   InitAudioDevice;
@@ -745,42 +786,40 @@ begin
       //ImageDrawRectangle(@Image, 0, 0, 352, 288, Palette[BorderColorIndex and $07]);
 
       FlashPhase := Odd(Frames div 16);
+      AttrTable := @AttrColors[Ord(FlashPhase)];
 
       Contended := True;
       for I := 0 to 191 do
       begin
         DrawBorderLine(Row);
+
+        { Screen layout: third, then pixel line within the character row, then
+          character row within the third. }
         Offset := 16384;
         Inc(Offset, (I div 64) * 2048);
         Inc(Offset, ((I mod 64) div 8) * 32);
         Inc(Offset, (I mod 8) * 256);
 
-        Col := 0;
-        for Addr := Offset to Offset + 31 do
+        AttrOffset := 22528 + ((I div 8) * 32);
+        PixelIndex := (Row * ImageWidth) + 48;
+
+        for Col := 0 to 31 do
         begin
-          Data := Memory[Addr];
-          if (Col mod 8) = 0 then
-          begin
-            //Attribute := 7 shl 3;
-            Attribute := Memory[22528 + ((I div 8) * 32) + (Col div 8)];
-            Flash := Attribute.Bits[7];
-            InkColorIndex := Attribute and %111;
-            InkColorIndex.Bits[3] := Attribute.Bits[6];
-            PaperColorIndex := (Attribute shr 3) and %111;
-            PaperColorIndex.Bits[3] := Attribute.Bits[6];
+          Data := Memory[Offset + Col];
+          Pair := @AttrTable^[Memory[AttrOffset + Col]];
 
-            if Flash and FlashPhase then
-              Swap<Byte>(InkColorIndex, PaperColorIndex);
-          end;
+          Pixels^[PixelIndex + 0] := Pair^[(Data shr 7) and 1];
+          Pixels^[PixelIndex + 1] := Pair^[(Data shr 6) and 1];
+          Pixels^[PixelIndex + 2] := Pair^[(Data shr 5) and 1];
+          Pixels^[PixelIndex + 3] := Pair^[(Data shr 4) and 1];
+          Pixels^[PixelIndex + 4] := Pair^[(Data shr 3) and 1];
+          Pixels^[PixelIndex + 5] := Pair^[(Data shr 2) and 1];
+          Pixels^[PixelIndex + 6] := Pair^[(Data shr 1) and 1];
+          Pixels^[PixelIndex + 7] := Pair^[Data and 1];
 
-          for J := 7 downto 0 do
-          begin
-            ImageDrawPixel(@Image,
-              Col + 48, Row,
-              Palette[if Data.Bits[J] then InkColorIndex else PaperColorIndex]);
-            Inc(Col);
-          end;
+          Inc(PixelIndex, 8);
         end;
+
         Run(ScanlineTStates);
         Inc(Row);
       end;
@@ -794,9 +833,7 @@ begin
         Inc(Row);
       end;
 
-      Colors := LoadImageColors(Image);
-      UpdateTexture(Video, Colors);
-      UnloadImageColors(Colors);
+      UpdateTexture(Video, Image.data);
     end;
 
     BeginTextureMode(Target);
