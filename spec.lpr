@@ -37,7 +37,9 @@ const
   ScanlineTStates = 224;
   TotalScanlines = 312;
   TStatesPerFrame = ScanlineTStates * TotalScanlines;
-  SamplesPerFrame = 441; { 22050Hz / 50fps }
+  FPS = 50;
+  AudioFrequency = 44100;
+  SamplesPerFrame = AudioFrequency div FPS;
   AudioChunkFrames = SamplesPerFrame * 5; { must stay >= the audio device's internal period size, or
     raylib pads the shortfall with raw zero bytes - which is true silence for signed
     16-bit PCM, so a shortfall now degrades to silence instead of a loud click }
@@ -521,15 +523,9 @@ var
   Fullscreen: Boolean = False;
   LinesCount: Single = 288;
   Shader: TShader;
-  ScanlinesEnabled: Int32 = 1;
-  GrayscaleEnabled: Int32 = 0;
-  CurvatureEnabled: Int32 = 1;
-  MaskEnabled: Int32 = 1;
   Curvature: Single = 7.5;
-  OldTV: Boolean = True;
   TVMode: Integer = %0111;
   S: String;
-  C: TColorB;
 
   procedure DrawBorderLine(ALine: Integer); inline;
   begin
@@ -617,11 +613,7 @@ begin
   ];
 
   for I := 0 to 15 do
-  begin
-    C := Palette[I];
-    //Palette[I] := ColorCreate(C.b, C.g, C.r, C.a);
-    Palette[I] := ColorContrast(C, -0.2);
-  end;
+    Palette[I] := ColorContrast(Palette[I], -0.1);
 
   BuildAttrColors;
 
@@ -676,7 +668,7 @@ begin
 
   //SetConfigFlags(FLAG_WINDOW_HIGHDPI);
   InitWindow(720, 576, 'Spec');
-  SetTargetFPS(50);
+  SetTargetFPS(FPS);
 
   Fullscreen := True;
   ToggleBorderlessWindowed;
@@ -701,7 +693,7 @@ begin
   InitAudioDevice;
 
   SetAudioStreamBufferSizeDefault(AudioChunkFrames);
-  AudioStream := LoadAudioStream(22050, 16, 1);
+  AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
   SetAudioStreamVolume(AudioStream, 0.25);
   PlayAudioStream(AudioStream);
 
