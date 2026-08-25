@@ -23,7 +23,7 @@ type
   TPixels = array[0..(352 * 288) - 1] of TColorB;
   PPixels = ^TPixels;
 
-  TJoystickType = (jkNone, jkKempston, jkCursor);
+  TJoystickType = (jtNone, jtKempston, jtCursor);
   TJoystick = record
     Type_: TJoystickType;
     Keys: record
@@ -267,7 +267,7 @@ function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
       Data.Bits[3] := IsKeyDown(KEY_FOUR);
       Data.Bits[4] := IsKeyDown(KEY_FIVE);
 
-      if Joystick.Type_ = jkCursor then
+      if Joystick.Type_ = jtCursor then
         Data.Bits[4] := Data.Bits[4] or IsKeyDown(KEY_LEFT);
 
       Result := Result or Data;
@@ -282,7 +282,7 @@ function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
       Data.Bits[3] := IsKeyDown(KEY_SEVEN);
       Data.Bits[4] := IsKeyDown(KEY_SIX);
 
-      if Joystick.Type_ = jkCursor then
+      if Joystick.Type_ = jtCursor then
       begin
         Data.Bits[0] := Data.Bits[0] or IsKeyDown(Joystick.Keys.Fire1);
         Data.Bits[2] := Data.Bits[2] or IsKeyDown(Joystick.Keys.Right);
@@ -338,6 +338,12 @@ function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
 
   function PollKempston: Byte;
   begin
+    if Joystick.Type_ <> jtKempston then
+    begin
+      Result := $FF;
+      Exit;
+    end;
+
     Result := 0;
     Result.Bits[0] := IsKeyDown(Joystick.Keys.Right);
     Result.Bits[1] := IsKeyDown(Joystick.Keys.Left);
@@ -350,17 +356,13 @@ function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
   { WriteLn('IO READ addr ', IntToHex(address, 4)); }
 
-  if not Odd(address) then
-  begin
-    Result := PollKeyboard(Hi(address));
-    Exit;
-  end;
+  Result := $FF;
 
-  case Joystick.Type_ of
-    jkKempston: Result := PollKempston
-  else
-    Result := $FF;
-  end;
+  if not address.Bits[0] then
+    Result := Result and PollKeyboard(Hi(address));
+
+  if not address.Bits[5] then
+    Result := Result and PollKempston;
 end;
 
 procedure OnIOWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
@@ -755,7 +757,7 @@ begin
 
   with Joystick do
   begin
-    Type_ := jkKempston;
+    Type_ := jtKempston;
     with Joystick.Keys do
     begin
       Left := KEY_LEFT;
@@ -848,9 +850,9 @@ begin
         else Low(TJoystickType);
 
       case Joystick.Type_ of
-        jkNone: S := 'Off';
-        jkKempston: S := 'Kempston';
-        jkCursor: S := 'Cursor';
+        jtNone: S := 'Off';
+        jtKempston: S := 'Kempston';
+        jtCursor: S := 'Cursor';
       end;
 
       SetOSD($'Joystick: {S}');
