@@ -32,6 +32,7 @@ type
   end;
 
 const
+  StartFullscreen = True;
   ImageWidth = 352;
   ImageHeight = 288;
   ScanlineTStates = 224;
@@ -595,7 +596,7 @@ var
   FlashPhase: Boolean;
   Frames: QWord = 0;
   Paused: Boolean = False;
-  Fullscreen: Boolean = False;
+  Fullscreen: Boolean = StartFullscreen;
   LinesCount: Single = 288;
   Shader: TShader;
   Curvature: Single = 7.5;
@@ -653,7 +654,6 @@ var
     SetShaderValue(Shader,
       GetShaderLocation(Shader, 'enableGrayscale'),
       @Value, SHADER_UNIFORM_INT);
-
 
     SetShaderValue(Shader,
       GetShaderLocation(Shader, 'curvature'),
@@ -761,15 +761,16 @@ begin
 
   SetTraceLogLevel(LOG_ERROR);
 
-  //SetConfigFlags(FLAG_WINDOW_HIGHDPI);
+  SetConfigFlags(FLAG_WINDOW_HIGHDPI);
   InitWindow(720, 576, 'Spec');
+  ClearWindowState(FLAG_VSYNC_HINT);
   SetTargetFPS(FPS);
 
-  {
-  Fullscreen := True;
-  ToggleBorderlessWindowed;
-  HideCursor;
-  }
+  if Fullscreen then
+  begin
+    ToggleBorderlessWindowed;
+    HideCursor;
+  end;
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
