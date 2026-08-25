@@ -96,9 +96,13 @@
     <Units>
       <Unit>
         <Filename Value="spec.lpr"/>
+        <UnitName Value="Spec"/>
       </Unit>
       <Unit>
         <Filename Value="shader.fs"/>
+      </Unit>
+      <Unit>
+        <Filename Value="Tape.pas"/>
       </Unit>
     </Units>
   </ProjectOptions>

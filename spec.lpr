@@ -10,7 +10,7 @@ program Spec;
 uses
   Classes, Sysutils, CTypes, Math,
   Raylib, Raymath,
-  Z80;
+  Z80, Tape;
 
 type
   { Ink/paper colour pair already resolved from one attribute byte, indexed by
@@ -46,9 +46,23 @@ const
   AudioHigh: CInt16 = CInt16.MaxValue;
   AudioLow: CInt16 = CInt16.MinValue;
 
+const
+  { raylib's AutomationEventType enum isn't exposed in raylib.h/raylib.pas
+    (it's internal to rcore.c) - these two values are its first two entries. }
+  INPUT_KEY_UP = 1;
+  INPUT_KEY_DOWN = 2;
+
 var
   CPU: TZ80;
   Memory: array[4000..$ffff] of Byte;
+  RomImage: array[0..$3FFF] of Byte;
+  { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_SCREENSHOT_DIR
+    env vars): scripts the LOAD "" ENTER keystrokes via raylib automation
+    events and dumps screenshots, so tape loading can be verified without a
+    real keyboard/window focus. }
+  AutoLoadFrame: Int64 = -1;
+  ScreenshotDir: String = '';
+  PendingScreenshot: Boolean = False;
   BorderColorIndex: Byte;
   Snapshot: String = '';
   Cycles: Integer = 0;
@@ -104,6 +118,8 @@ begin
   PrevT := NewT;
 end;
 
+procedure SetOSD(AText: String; ADuration: Double = 2); forward;
+
 procedure OnHalt(context: Pointer; state: UInt8); cdecl;
 begin
   { Writeln('HALT'); }
@@ -115,16 +131,77 @@ begin
   Result := 0;
 end;
 
+function TrapMemRead(Address: UInt16): Byte;
+begin
+  Result := if address < $4000 then RomImage[address] else Memory[address];
+end;
+
+procedure TrapMemWrite(Address: UInt16; Value: Byte);
+begin
+  if address < $4000 then Exit; { ROM }
+  Memory[address] := Value;
+end;
+
 function OnHook(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
-  WriteLn('HOOK');
-  Result := 0;
+  if address = LDBytesAddress then
+  begin
+    HandleLoadTrap(@CPU, @TrapMemRead, @TrapMemWrite);
+    SetOSD($'Loading block {CurrentBlock}/{TotalBlocks}');
+    if not ScreenshotDir.IsEmpty then
+      PendingScreenshot := True;
+    { The Z80 core treats the hook's return value as a fresh opcode to
+      dispatch immediately UNLESS it's Z80_HOOK (see hook's INSN in
+      Z80.c) - returning Z80_HOOK is what tells it "the hook fully
+      replaced this instruction", leaving `pc` exactly where
+      HandleLoadTrap's RET simulation set it, instead of also executing
+      one stray extra instruction there first. }
+    Result := Z80_HOOK;
+  end
+  else
+    { Not our trap address - this is a real (if useless) LD H,H
+      instruction elsewhere; let it behave as a harmless NOP rather than
+      swallowing it as Z80_HOOK, which would leave `pc` stuck unadvanced. }
+    Result := Z80_NOP;
+end;
+
+procedure AutoKeyEvent(EventType: LongWord; Key: TKeyboardKey);
+var
+  Event: TAutomationEvent;
+begin
+  Event.type_ := EventType;
+  Event.params[0] := Integer(Key);
+  PlayAutomationEvent(Event);
+end;
+
+{ Scripts "LOAD ""ENTER" one keystroke at a time - J (LOAD keyword), then
+  SYMBOL SHIFT+P twice (the BASIC editor does NOT auto-pair quotes, so both
+  the opening and closing " need an explicit keypress), then ENTER. Each
+  key is held for 5 frames with a 5-frame gap before the next, generous
+  enough that the ROM's own keyboard debounce reliably registers it. Rel
+  is frames since AutoLoadFrame. }
+procedure RunAutoLoadScript(Rel: Int64);
+begin
+  case Rel of
+    0:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_J);
+    3:  AutoKeyEvent(INPUT_KEY_UP, KEY_J);
+    5:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    7:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
+    10: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
+    12: AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
+    22: AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    24: AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
+    27: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
+    29: AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
+    39: AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
+    42: AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
+  end;
 end;
 
 function OnMemoryRead(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
   { WriteLn('MEMORY READ addr ', address); }
-  Result := if address < $4000 then ROMBytes[address] else Memory[address];
+  Result := TrapMemRead(address);
   if Contended and InRange(Address, $4000, $7FFF) then
     CPU.cycles := CPU.cycles + 1;
 end;
@@ -132,8 +209,7 @@ end;
 procedure OnMemoryWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
 begin
   { WriteLn('MEMORY WRITE addr ', address, ', val ', value); }
-  if address < $4000 then Exit; { ROM }
-  Memory[address] := value;
+  TrapMemWrite(address, value);
   if Contended and InRange(Address, $4000, $7FFF) then
     CPU.cycles := CPU.cycles + 1;
 end;
@@ -356,7 +432,6 @@ var
 begin
   Requested := Max(ACycles - Overshoot, 0);
   Fact := z80_run(@CPU, Requested);
-  //Writeln($'CPU requested: {ACycles}, fact: {Fact}');
   Overshoot := Fact - Requested;
   Inc(Cycles, Fact);
 end;
@@ -621,13 +696,33 @@ begin
 
   z80_power(@CPU, True);
 
+  Move(ROMBytes, RomImage, SizeOf(RomImage));
+
   if ParamCount > 0 then Snapshot := ParamStr(1);
 
   if not Snapshot.IsEmpty then
   begin
-    if not Snapshot.EndsWith('.z80') then Snapshot := Snapshot + '.z80';
-    LoadZ80(@CPU, Snapshot);
+    if Snapshot.ToLower.EndsWith('.tap', True) then
+    begin
+      { Leave the ROM unpatched if the tape fails to load, so a bad
+        filename doesn't silently break normal BASIC boot. }
+      if LoadTAP(Snapshot) then
+      begin
+        RomImage[LDBytesAddress] := Z80_HOOK;
+        if not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
+          AutoLoadFrame := 100; { give the ROM time to finish booting to BASIC first }
+      end;
+    end
+    else
+    begin
+      if not Snapshot.ToLower.EndsWith('.z80') then Snapshot := Snapshot + '.z80';
+      LoadZ80(@CPU, Snapshot);
+    end;
   end;
+
+  ScreenshotDir := GetEnvironmentVariable('SPEC_SCREENSHOT_DIR');
+  if not ScreenshotDir.IsEmpty then
+    ForceDirectories(ScreenshotDir);
 
   with CPU do
   begin
@@ -670,9 +765,11 @@ begin
   InitWindow(720, 576, 'Spec');
   SetTargetFPS(FPS);
 
+  {
   Fullscreen := True;
   ToggleBorderlessWindowed;
   HideCursor;
+  }
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
@@ -742,6 +839,9 @@ begin
     begin
       Inc(Frames);
       Cycles := 0;
+
+      if AutoLoadFrame >= 0 then
+        RunAutoLoadScript(Int64(Frames) - AutoLoadFrame);
 
       AdvanceAudio(TStatesPerFrame);
       PrevTiming := 0;
@@ -849,6 +949,24 @@ begin
     { DrawFPS(10, 10); }
 
     EndDrawing;
+
+    if not ScreenshotDir.IsEmpty then
+    begin
+      if PendingScreenshot then
+      begin
+        { ExportImage writes fileName verbatim - unlike TakeScreenshot, which
+          silently joins it under CORE.Storage.basePath (the exe's directory)
+          and so fails quietly for an arbitrary absolute output path. }
+        ExportImage(Image, PAnsiChar($'{ScreenshotDir}/block-{CurrentBlock}-of-{TotalBlocks}.png'));
+        PendingScreenshot := False;
+      end
+      else if (AutoLoadFrame >= 0) and (Frames >= QWord(AutoLoadFrame))
+        and (Frames <= QWord(AutoLoadFrame) + 80) then
+        ExportImage(Image, PAnsiChar($'{ScreenshotDir}/frame-{Frames}.png'))
+      else if (AutoLoadFrame >= 0) and (Frames > QWord(AutoLoadFrame) + 80)
+        and (Frames <= QWord(AutoLoadFrame) + 300) and ((Frames mod 10) = 0) then
+        ExportImage(Image, PAnsiChar($'{ScreenshotDir}/frame-{Frames}.png'));
+    end;
   end;
 
   StopAudioStream(AudioStream);
