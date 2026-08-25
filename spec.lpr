@@ -8,7 +8,7 @@ program Spec;
 {$endif}
 
 uses
-  Classes, Sysutils, CTypes, Math,
+  Classes, Sysutils, CTypes, Math, IniFiles,
   Raylib, Raymath,
   Z80, Tape;
 
@@ -601,7 +601,15 @@ var
   Shader: TShader;
   Curvature: Single = 7.5;
   TVMode: Integer = %0111;
+  Volume: Single;
   S: String;
+  Config: TIniFile;
+
+  procedure SetVolume(AVolume: Single; K: Single = 4);
+  begin
+    Volume := EnsureRange(AVolume, 0, 1.0);
+    SetAudioStreamVolume(AudioStream, (Exp(K * Volume) - 1) / (Exp(K) - 1));
+  end;
 
   procedure DrawBorderLine(ALine: Integer); inline;
   begin
@@ -759,10 +767,25 @@ begin
     end;
   end;
 
+  Config := autofree TIniFile.Create(GetAppConfigFile(False));
+  Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
+
   SetTraceLogLevel(LOG_ERROR);
 
-  SetConfigFlags(FLAG_WINDOW_HIGHDPI);
-  InitWindow(720, 576, 'Spec');
+  if Config.ReadBool('Window', 'HiDPI', False) then
+    SetConfigFlags(FLAG_WINDOW_HIGHDPI);
+
+  if Fullscreen then
+    InitWindow(720, 576, 'Spec')
+  else
+    InitWindow(
+      Config.ReadInteger('Window', 'Width', 720),
+      Config.ReadInteger('Window', 'Height', 576),
+      'Spec');
+
+  TVMode := Config.ReadInteger('Window', 'TVMode', 7);
+
+  SetWindowState(FLAG_WINDOW_RESIZABLE);
   ClearWindowState(FLAG_VSYNC_HINT);
   SetTargetFPS(FPS);
 
@@ -792,7 +815,7 @@ begin
 
   SetAudioStreamBufferSizeDefault(AudioChunkFrames);
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
-  SetAudioStreamVolume(AudioStream, 0.25);
+  SetVolume(Config.ReadFloat('Audio', 'Volume', 0.4));
   PlayAudioStream(AudioStream);
 
   FillByte(AccumBuf, SizeOf(AccumBuf), 0); { 0 = silence for signed 16-bit PCM }
@@ -803,6 +826,14 @@ begin
 
   while not WindowShouldClose do
   begin
+    if IsKeyPressed(KEY_F7) or IsKeyPressed(KEY_F8) then
+    begin
+      SetVolume(Volume
+        - IfThen(IsKeyPressed(KEY_F7), 0.05, 0)
+        + IfThen(IsKeyPressed(KEY_F8), 0.05, 0));
+      SetOsd($'Volume: {Volume * 100:%.0f}');
+    end;
+
     if IsKeyPressed(KEY_F9) then
     begin
       TVMode := (TVMode + 1) and $0F;
@@ -978,6 +1009,18 @@ begin
   UnloadImage(Image);
   UnloadTexture(Video);
   UnloadRenderTexture(Target);
+
+  Config.WriteBool('Window', 'Fullscreen', Fullscreen);
+  if not Fullscreen then
+  begin
+    Config.WriteInteger('Window', 'Width', GetScreenWidth);
+    Config.WriteInteger('Window', 'Height', GetScreenHeight);
+  end;
+
+  Config.WriteInteger('Window', 'TVMode', TVMode);
+
+  Config.WriteFloat('Audio', 'Volume', Volume);
+
   CloseWindow;
 end;
 
