@@ -195,13 +195,13 @@ end;
 function OnMemoryRead(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
   Result := TrapMemRead(address);
-  if Machine.Contended and ((Address and $4000) <> 0) then Machine.Wait(1);
+  if Machine.Contended and InRange(Address, $4000, $7FFF) then Machine.Wait(1);
 end;
 
 procedure OnMemoryWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
 begin
   TrapMemWrite(address, value);
-  if Machine.Contended and ((Address and $4000) <> 0) then Machine.Wait(1);
+  if Machine.Contended and InRange(Address, $4000, $7FFF) then Machine.Wait(1);
 end;
 
 function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
