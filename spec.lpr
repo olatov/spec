@@ -63,7 +63,7 @@ var
   ScreenshotDir: String = '';
   PendingScreenshot: Boolean = False;
   Snapshot: String = '';
-  ABuf: array[0..SamplesPerFrame - 1] of CInt16;
+  AudioBuffer: array[0..SamplesPerFrame - 1] of CInt16;
   AudioStream: TAudioStream;
   OSD: record
     Text: String;
@@ -99,7 +99,7 @@ begin
 
     if Machine.AudioPin then Inc(BucketHigh, NextBoundary - PrevT);
     Duration := NextBoundary - BucketStartT;
-    ABuf[PrevTiming] := CInt16(AudioLow + (BucketHigh * (Integer(AudioHigh) - AudioLow)) div Duration);
+    AudioBuffer[PrevTiming] := CInt16(AudioLow + (BucketHigh * (Integer(AudioHigh) - AudioLow)) div Duration);
 
     PrevT := NextBoundary;
     BucketStartT := NextBoundary;
@@ -755,7 +755,7 @@ begin
       BucketStartT := 0;
       BucketHigh := 0;
 
-      Move(ABuf, AccumBuf[AccumPos], SamplesPerFrame * SizeOf(CInt16));
+      Move(AudioBuffer, AccumBuf[AccumPos], SamplesPerFrame * SizeOf(CInt16));
       Inc(AccumPos, SamplesPerFrame);
       if AccumPos >= AudioChunkFrames then
       begin

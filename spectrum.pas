@@ -92,7 +92,7 @@ end;
 
 procedure TZXSpectrum48.RunScanline; inline;
 begin
-  if FCurrentScanline <> 0 then
+  if FCurrentScanline <> 7 then
     Tick(224)
   else
   begin
