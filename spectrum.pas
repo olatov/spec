@@ -92,18 +92,19 @@ end;
 
 procedure TZXSpectrum48.RunScanline; inline;
 begin
-  if FCurrentScanline <> 7 then
+  if FCurrentScanline <> 0 then
     Tick(224)
   else
   begin
-    Tick(192);
+    Tick(16);
     INT := True;
     Tick(32);
     INT := False;
+    Tick(176);
   end;
 
   Inc(FCurrentScanline);
-  FContended := InRange(FCurrentScanline, 48, 255);
+  FContended := InRange(FCurrentScanline, 64, 255);
 end;
 
 procedure TZXSpectrum48.BeginFrame;
