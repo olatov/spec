@@ -977,7 +977,9 @@ begin
     DrawTexturePro(
       Target.Texture,
       RectangleCreate(16, 16, Target.texture.width - 32, -Target.texture.height + 32),
-      RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0, GetScreenHeight * 1.333, GetScreenHeight),
+      if (GetScreenWidth / GetScreenHeight) >= 1.333
+        then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0, GetScreenHeight * 1.333, GetScreenHeight)
+        else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375), GetScreenWidth, GetScreenWidth * 0.75),
       Vector2Zero, 0, WHITE);
     EndShaderMode;
     { DrawFPS(10, 10); }
