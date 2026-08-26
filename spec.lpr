@@ -8,9 +8,9 @@ program Spec;
 {$endif}
 
 uses
-  Classes, Sysutils, CTypes, Math, IniFiles,
+  Classes, Sysutils, CTypes, Math, IniFiles, System.IOUtils,
   Raylib, Raymath,
-  Z80, Tape;
+  Z80, Tape, Spectrum;
 
 type
   { Ink/paper colour pair already resolved from one attribute byte, indexed by
@@ -54,9 +54,7 @@ const
   INPUT_KEY_DOWN = 2;
 
 var
-  CPU: TZ80;
-  Memory: array[4000..$ffff] of Byte;
-  RomImage: array[0..$3FFF] of Byte;
+  Machine: TZXSpectrum48;
   { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_SCREENSHOT_DIR
     env vars): scripts the LOAD "" ENTER keystrokes via raylib automation
     events and dumps screenshots, so tape loading can be verified without a
@@ -64,13 +62,9 @@ var
   AutoLoadFrame: Int64 = -1;
   ScreenshotDir: String = '';
   PendingScreenshot: Boolean = False;
-  BorderColorIndex: Byte;
   Snapshot: String = '';
-  Cycles: Integer = 0;
-  Overshoot: Integer = 0;
   ABuf: array[0..SamplesPerFrame - 1] of CInt16;
   AudioStream: TAudioStream;
-  AudioPin: Boolean = False;
   OSD: record
     Text: String;
     Lifetime: Double;
@@ -81,10 +75,8 @@ var
   BucketHigh: Integer = 0;   { T-states spent HIGH within the current bucket so far }
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
-  Contended: Boolean = False;
   Joystick: TJoystick;
   {$embedstr ShaderText 'shader.fs'}
-  {$embedbytes ROMBytes '48.rom'}
 
 { Advances the audio-sample cursor to absolute T-state NewT, treating AudioPin as having
   held constant since the last call. Rather than snapshotting one instant per output sample
@@ -105,7 +97,7 @@ begin
     NextBoundary := BucketBoundary(PrevTiming + 1);
     if NextBoundary > NewT then Break;
 
-    if AudioPin then Inc(BucketHigh, NextBoundary - PrevT);
+    if Machine.AudioPin then Inc(BucketHigh, NextBoundary - PrevT);
     Duration := NextBoundary - BucketStartT;
     ABuf[PrevTiming] := CInt16(AudioLow + (BucketHigh * (Integer(AudioHigh) - AudioLow)) div Duration);
 
@@ -115,7 +107,7 @@ begin
     Inc(PrevTiming);
   end;
 
-  if AudioPin then Inc(BucketHigh, NewT - PrevT);
+  if Machine.AudioPin then Inc(BucketHigh, NewT - PrevT);
   PrevT := NewT;
 end;
 
@@ -123,31 +115,32 @@ procedure SetOSD(AText: String; ADuration: Double = 2); forward;
 
 procedure OnHalt(context: Pointer; state: UInt8); cdecl;
 begin
-  { Writeln('HALT'); }
+
 end;
 
 function OnNop(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
-  { WriteLn('NOP'); }
   Result := 0;
 end;
 
 function TrapMemRead(Address: UInt16): Byte;
 begin
-  Result := if address < $4000 then RomImage[address] else Memory[address];
+  Result := if (address and $C000) = 0
+    then Machine.ROM[address]
+    else Machine.RAM[address];
 end;
 
 procedure TrapMemWrite(Address: UInt16; Value: Byte);
 begin
-  if address < $4000 then Exit; { ROM }
-  Memory[address] := Value;
+  if (address and $C000) = 0 then Exit; { ROM }
+  Machine.RAM[address] := Value;
 end;
 
 function OnHook(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
   if address = LDBytesAddress then
   begin
-    HandleLoadTrap(@CPU, @TrapMemRead, @TrapMemWrite);
+    HandleLoadTrap(@Machine.CPU, @TrapMemRead, @TrapMemWrite);
     SetOSD($'Loading block {CurrentBlock}/{TotalBlocks}');
     if not ScreenshotDir.IsEmpty then
       PendingScreenshot := True;
@@ -201,18 +194,14 @@ end;
 
 function OnMemoryRead(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
-  { WriteLn('MEMORY READ addr ', address); }
   Result := TrapMemRead(address);
-  if Contended and InRange(Address, $4000, $7FFF) then
-    CPU.cycles := CPU.cycles + 1;
+  if Machine.Contended and ((Address and $4000) <> 0) then Machine.Wait(1);
 end;
 
 procedure OnMemoryWrite(context: Pointer; address: UInt16; value: UInt8); cdecl;
 begin
-  { WriteLn('MEMORY WRITE addr ', address, ', val ', value); }
   TrapMemWrite(address, value);
-  if Contended and InRange(Address, $4000, $7FFF) then
-    CPU.cycles := CPU.cycles + 1;
+  if Machine.Contended and ((Address and $4000) <> 0) then Machine.Wait(1);
 end;
 
 function OnIORead(context: Pointer; address: UInt16): UInt8; cdecl;
@@ -370,9 +359,9 @@ begin
   case address.Bytes[0] of
     $FE:
       begin
-        BorderColorIndex := value and %111;
-        AdvanceAudio(Cycles + CPU.cycles);
-        AudioPin := value.Bits[4];
+        Machine.BorderColorIndex := value and %111;
+        AdvanceAudio(Machine.Cycles + Machine.CPU.cycles);
+        Machine.AudioPin := value.Bits[4];
       end;
   end;
 end;
@@ -396,183 +385,32 @@ end;
 
 function OnINTFetch(context: Pointer; address: UInt16): UInt8; cdecl;
 begin
-  { Writeln('INT fetch'); }
+  Result := 0;
 end;
 
 function OnIllegal(cpu: PZ80; opcode: UInt8): UInt8; cdecl;
 begin
-  { WriteLn('Illegal'); }
+  Result := 0;
 end;
 
 procedure OnLDIA(context: Pointer); cdecl;
 begin
-  { WriteLn('LDIA'); }
+
 end;
 
 procedure OnLDRA(context: Pointer); cdecl;
 begin
-  { WriteLn('LDRA'); }
+
 end;
 
 procedure OnRETI(context: Pointer); cdecl;
 begin
-  { WriteLn('RETI'); }
+
 end;
 
 procedure OnRETN(context: Pointer); cdecl;
 begin
-  { WriteLn('RETN'); }
-end;
 
-procedure LoadSNA(Z80: PZ80; Filename: String);
-begin
-
-end;
-
-procedure Run(ACycles: Integer); inline;
-var
-  Requested, Fact: Integer;
-begin
-  Requested := Max(ACycles - Overshoot, 0);
-  Fact := z80_run(@CPU, Requested);
-  Overshoot := Fact - Requested;
-  Inc(Cycles, Fact);
-end;
-
-procedure LoadZ80(Z80: PZ80; Filename: String);
-var
-  Stream: TBytesStream;
-  Data, ExtData: Byte;
-  Addr: Integer;
-  Compressed: Boolean;
-  PC1: UInt16;
-  HeaderLen: UInt16;
-  HWMode: Byte;
-  BlockLen: UInt16;
-  PageNum: Byte;
-  BlockEnd: Int64;
-
-  { Decompresses a run of ED-ED-count-value encoded bytes from Stream into
-    Memory, starting at StartAddr, until Stream.Position reaches EndPos.
-    StartAddr < 0 means "discard" (used to skip unsupported 128K pages). }
-  procedure DecodeBlock(StartAddr: Integer; EndPos: Int64);
-  var
-    CurAddr, I: Integer;
-  begin
-    CurAddr := StartAddr;
-    while Stream.Position < EndPos do
-    begin
-      Data := Stream.ReadByte;
-      if Data = $ED then
-      begin
-        ExtData := Stream.ReadByte;
-        if ExtData = $ED then
-        begin
-          Data := Stream.ReadByte;
-          ExtData := Stream.ReadByte;
-          for I := 1 to Data do
-          begin
-            if CurAddr >= 0 then Memory[CurAddr] := ExtData;
-            Inc(CurAddr);
-          end;
-        end else
-        begin
-          if CurAddr >= 0 then
-          begin
-            Memory[CurAddr] := Data;
-            Memory[CurAddr + 1] := ExtData;
-          end;
-          Inc(CurAddr, 2);
-        end;
-      end else
-      begin
-        if CurAddr >= 0 then Memory[CurAddr] := Data;
-        Inc(CurAddr);
-      end;
-    end;
-  end;
-
-begin
-  Stream := autofree TBytesStream.Create;
-  Stream.LoadFromFile(Filename);
-
-  Z80^.af.bytes.high := Stream.ReadByte;
-  Z80^.af.bytes.low := Stream.ReadByte;
-  Z80^.bc.word := Stream.ReadWord;
-  Z80^.hl.word := Stream.ReadWord;
-  PC1 := Stream.ReadWord; { 0 here means this is actually a v2/v3 snapshot }
-  Z80^.sp.word := Stream.ReadWord;
-  Z80^.i := Stream.ReadByte;
-  Z80^.r := Stream.ReadByte;
-
-  Data := Stream.ReadByte;
-  Z80^.r.Bits[7] := Data.Bits[0];
-  BorderColorIndex := (Data shr 1) and %111;
-  Compressed := Data.Bits[5];
-
-  Z80^.de.word := Stream.ReadWord;
-  Z80^.bc_.word := Stream.ReadWord;
-  Z80^.de_.word := Stream.ReadWord;
-  Z80^.hl_.word := Stream.ReadWord;
-  Z80^.af_.bytes.high := Stream.ReadByte;
-  Z80^.af_.bytes.low := Stream.ReadByte;
-  Z80^.ix_iy[1].word := Stream.ReadWord;
-  Z80^.ix_iy[0].word := Stream.ReadWord;
-
-  Z80^.iff1 := Stream.ReadByte; { Interrupt flipflop, 0=DI, otherwise EI }
-  Z80^.iff2 := Stream.ReadByte; { IFF2 (not particularly important...) }
-  Z80^.im := Stream.ReadByte and %11;
-
-  if PC1 <> 0 then
-  begin
-    { Version 1: PC sits in the base header, and one flat block holds the
-      whole 48K RAM image. }
-    Z80^.pc.word := PC1;
-
-    if Compressed then
-      DecodeBlock(16384, Stream.Size - 4)
-    else
-      Stream.Read(Memory[16384], Stream.Size - Stream.Position);
-  end else
-  begin
-    { Version 2/3: PC=0 in the base header is the marker that an extended
-      header follows, holding the real PC, then memory arrives as separate
-      page-numbered blocks rather than one flat image. The "Compressed" flag
-      read above is a v1-only field and has no meaning here - each block
-      carries its own length instead. }
-    HeaderLen := Stream.ReadWord;
-    Z80^.pc.word := Stream.ReadWord;
-    HWMode := Stream.ReadByte;
-    Stream.Position := Stream.Position + (HeaderLen - 3);
-
-    while Stream.Position < Stream.Size do
-    begin
-      BlockLen := Stream.ReadWord;
-      PageNum := Stream.ReadByte;
-
-      { 48K page numbering; other pages are 128K banks / ROM, unsupported
-        by this emulator's flat memory model, so they're skipped. }
-      case PageNum of
-        4: Addr := $8000;
-        5: Addr := $C000;
-        8: Addr := $4000;
-        else Addr := -1;
-      end;
-
-      if BlockLen = $FFFF then
-      begin
-        { Uncompressed 16K page }
-        if Addr >= 0 then
-          Stream.Read(Memory[Addr], 16384)
-        else
-          Stream.Position := Stream.Position + 16384;
-      end else
-      begin
-        BlockEnd := Stream.Position + BlockLen;
-        DecodeBlock(Addr, BlockEnd);
-      end;
-    end;
-  end;
 end;
 
 procedure SetOSD(AText: String; ADuration: Double = 2);
@@ -587,7 +425,7 @@ var
   Image: TImage;
   Video: TTexture2D;
   Pixels: PPixels;
-  Row, I, Col, Offset, AttrOffset, PixelIndex, LinesLoc: Integer;
+  I, AttrOffset, PixelIndex, LinesLoc: Integer;
   Data: Byte;
   Palette: array[0..15] of TColorB;
   { One resolved colour pair per attribute byte, per FLASH phase: the whole
@@ -595,8 +433,6 @@ var
   AttrColors: array[0..1] of TAttrTable;
   AttrTable: PAttrTable;
   Pair: ^TPixelPair;
-  FlashPhase: Boolean;
-  Frames: QWord = 0;
   Paused: Boolean = False;
   Fullscreen: Boolean = StartFullscreen;
   LinesCount: Single = 288;
@@ -606,6 +442,7 @@ var
   Volume: Single;
   S: String;
   Config: TIniFile;
+  Stream: TFileStream;
 
   procedure SetVolume(AVolume: Single; K: Single = 4);
   begin
@@ -613,11 +450,47 @@ var
     SetAudioStreamVolume(AudioStream, (Exp(K * Volume) - 1) / (Exp(K) - 1));
   end;
 
-  procedure DrawBorderLine(ALine: Integer); inline;
+  procedure DrawScanline(ALine: Integer); inline;
+  var
+    X, Y, Offset: Integer;
   begin
-    if ALine >= ImageHeight then Exit;
-    FillDWord(Pixels^[ALine * ImageWidth], ImageWidth,
-      PDWord(@Palette[BorderColorIndex])^);
+    Y := ALine - 16;
+    if not InRange(Y, 0, ImageHeight - 1) then Exit;
+
+    { Border }
+    FillDWord(Pixels^[Y * ImageWidth], ImageWidth,
+      PDWord(@Palette[Machine.BorderColorIndex])^);
+
+    { Main }
+    Y := Y - 48;
+    if not InRange(Y, 0, 191) then Exit;
+
+    { Screen layout: third, then pixel Y within the character row, then
+      character row within the third. }
+    Offset := 16384;
+    Inc(Offset, (Y div 64) * 2048);
+    Inc(Offset, ((Y mod 64) div 8) * 32);
+    Inc(Offset, (Y mod 8) * 256);
+
+    AttrOffset := 22528 + ((Y div 8) * 32);
+    PixelIndex := ((Y + 48) * ImageWidth) + 48;
+
+    for X := 0 to 31 do
+    begin
+      Data := Machine.RAM[Offset + X];
+      Pair := @AttrTable^[Machine.RAM[AttrOffset + X]];
+
+      Pixels^[PixelIndex + 0] := Pair^[(Data shr 7) and 1];
+      Pixels^[PixelIndex + 1] := Pair^[(Data shr 6) and 1];
+      Pixels^[PixelIndex + 2] := Pair^[(Data shr 5) and 1];
+      Pixels^[PixelIndex + 3] := Pair^[(Data shr 4) and 1];
+      Pixels^[PixelIndex + 4] := Pair^[(Data shr 3) and 1];
+      Pixels^[PixelIndex + 5] := Pair^[(Data shr 2) and 1];
+      Pixels^[PixelIndex + 6] := Pair^[(Data shr 1) and 1];
+      Pixels^[PixelIndex + 7] := Pair^[Data and 1];
+
+      Inc(PixelIndex, 8);
+    end;
   end;
 
   { Resolves every attribute byte into its ink/paper colour pair, for both FLASH
@@ -672,10 +545,9 @@ var
 
 begin
   if not LoadLibrary then
-  begin
-    WriteLn('Fatal: failed to load Z80 library.');
-    Halt(1);
-  end;
+    raise Exception.CreateFmt('Failed to load %s', [DefaultZ80LibPath]);
+
+  Machine := autofree TZXSpectrum48.Create;
 
   Palette := [
     GetColor($000000FF),
@@ -702,39 +574,11 @@ begin
 
   BuildAttrColors;
 
-  FillByte(CPU, SizeOf(CPU), 0);
-
-  z80_power(@CPU, True);
-
-  Move(ROMBytes, RomImage, SizeOf(RomImage));
-
-  if ParamCount > 0 then Snapshot := ParamStr(1);
-
-  if not Snapshot.IsEmpty then
-  begin
-    if Snapshot.ToLower.EndsWith('.tap', True) then
-    begin
-      { Leave the ROM unpatched if the tape fails to load, so a bad
-        filename doesn't silently break normal BASIC boot. }
-      if LoadTAP(Snapshot) then
-      begin
-        RomImage[LDBytesAddress] := Z80_HOOK;
-        if not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
-          AutoLoadFrame := 100; { give the ROM time to finish booting to BASIC first }
-      end;
-    end
-    else
-    begin
-      if not Snapshot.ToLower.EndsWith('.z80') then Snapshot := Snapshot + '.z80';
-      LoadZ80(@CPU, Snapshot);
-    end;
-  end;
-
   ScreenshotDir := GetEnvironmentVariable('SPEC_SCREENSHOT_DIR');
   if not ScreenshotDir.IsEmpty then
     ForceDirectories(ScreenshotDir);
 
-  with CPU do
+  with Machine.CPU do
   begin
     fetch := @OnMemoryRead;
     fetch_opcode := @OnMemoryRead;
@@ -818,6 +662,35 @@ begin
   SetAudioStreamBufferSizeDefault(AudioChunkFrames);
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
   SetVolume(Config.ReadFloat('Audio', 'Volume', 0.4));
+
+  Machine.Power := True;
+
+  if ParamCount > 0 then Snapshot := ParamStr(1);
+
+  if not Snapshot.IsEmpty then
+  begin
+    if Snapshot.ToLower.EndsWith('.tap', True) then
+    begin
+      { Leave the ROM unpatched if the tape fails to load, so a bad
+        filename doesn't silently break normal BASIC boot. }
+      if LoadTAP(Snapshot) then
+      begin
+        Machine.ROM[LDBytesAddress] := Z80_HOOK;
+        if not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
+          AutoLoadFrame := 100; { give the ROM time to finish booting to BASIC first }
+      end;
+    end else
+    begin
+      if not Snapshot.ToLower.EndsWith('.z80') then Snapshot := Snapshot + '.z80';
+      Stream := TFile.OpenRead(Snapshot);
+      try
+        Machine.LoadZ80(Stream);
+      finally
+        FreeAndNil(Stream);
+      end;
+    end;
+  end;
+
   PlayAudioStream(AudioStream);
 
   FillByte(AccumBuf, SizeOf(AccumBuf), 0); { 0 = silence for signed 16-bit PCM }
@@ -871,11 +744,10 @@ begin
 
     if not Paused then
     begin
-      Inc(Frames);
-      Cycles := 0;
+      Machine.BeginFrame;
 
       if AutoLoadFrame >= 0 then
-        RunAutoLoadScript(Int64(Frames) - AutoLoadFrame);
+        RunAutoLoadScript(Int64(Machine.Frames) - AutoLoadFrame);
 
       AdvanceAudio(TStatesPerFrame);
       PrevTiming := 0;
@@ -892,71 +764,20 @@ begin
         AccumPos := 0;
       end;
 
-      Run((ScanlineTStates * 8) - 32);  { VBlank }
-      z80_int(@CPU, True);
-      Run(32);
-      z80_int(@CPU, False);
+      AttrTable := @AttrColors[Ord(Machine.FlashPhase)];
 
-      Run((ScanlineTStates * 8)); { "Unvisible" top border }
-
-      Row := 0;
-
-      { Top border }
-      for I := 1 to 48 do
+      {
+        RASTER:
+          VBlank: 8 lines (INT in the end of line 0)
+          Top border: 56 (8 invisible + 48 visible) lines
+          Main screen: 192 lines
+          Bottom border: 56 lines
+        TOTAL: 312 lines
+      }
+      for I := 1 to 312 do
       begin
-        DrawBorderLine(Row);
-        Run(ScanlineTStates);
-        Inc(Row);
-      end;
-
-      //ImageDrawRectangle(@Image, 0, 0, 352, 288, Palette[BorderColorIndex and $07]);
-
-      FlashPhase := Odd(Frames div 16);
-      AttrTable := @AttrColors[Ord(FlashPhase)];
-
-      Contended := True;
-      for I := 0 to 191 do
-      begin
-        DrawBorderLine(Row);
-
-        { Screen layout: third, then pixel line within the character row, then
-          character row within the third. }
-        Offset := 16384;
-        Inc(Offset, (I div 64) * 2048);
-        Inc(Offset, ((I mod 64) div 8) * 32);
-        Inc(Offset, (I mod 8) * 256);
-
-        AttrOffset := 22528 + ((I div 8) * 32);
-        PixelIndex := (Row * ImageWidth) + 48;
-
-        for Col := 0 to 31 do
-        begin
-          Data := Memory[Offset + Col];
-          Pair := @AttrTable^[Memory[AttrOffset + Col]];
-
-          Pixels^[PixelIndex + 0] := Pair^[(Data shr 7) and 1];
-          Pixels^[PixelIndex + 1] := Pair^[(Data shr 6) and 1];
-          Pixels^[PixelIndex + 2] := Pair^[(Data shr 5) and 1];
-          Pixels^[PixelIndex + 3] := Pair^[(Data shr 4) and 1];
-          Pixels^[PixelIndex + 4] := Pair^[(Data shr 3) and 1];
-          Pixels^[PixelIndex + 5] := Pair^[(Data shr 2) and 1];
-          Pixels^[PixelIndex + 6] := Pair^[(Data shr 1) and 1];
-          Pixels^[PixelIndex + 7] := Pair^[Data and 1];
-
-          Inc(PixelIndex, 8);
-        end;
-
-        Run(ScanlineTStates);
-        Inc(Row);
-      end;
-      Contended := False;
-
-      { Bottom border }
-      for I := 1 to 56 do
-      begin
-        DrawBorderLine(Row);
-        Run(ScanlineTStates);
-        Inc(Row);
+        DrawScanline(Machine.CurrentScanline);
+        Machine.RunScanline;
       end;
 
       UpdateTexture(Video, Image.data);
@@ -994,23 +815,18 @@ begin
         ExportImage(Image, PAnsiChar($'{ScreenshotDir}/block-{CurrentBlock}-of-{TotalBlocks}.png'));
         PendingScreenshot := False;
       end
-      else if (AutoLoadFrame >= 0) and (Frames >= QWord(AutoLoadFrame))
-        and (Frames <= QWord(AutoLoadFrame) + 80) then
-        ExportImage(Image, PAnsiChar($'{ScreenshotDir}/frame-{Frames}.png'))
-      else if (AutoLoadFrame >= 0) and (Frames > QWord(AutoLoadFrame) + 80)
-        and (Frames <= QWord(AutoLoadFrame) + 300) and ((Frames mod 10) = 0) then
-        ExportImage(Image, PAnsiChar($'{ScreenshotDir}/frame-{Frames}.png'));
+      else if (AutoLoadFrame >= 0) and (Machine.Frames >= QWord(AutoLoadFrame))
+        and (Machine.Frames <= QWord(AutoLoadFrame) + 80) then
+        ExportImage(Image, PAnsiChar($'{ScreenshotDir}/frame-{Machine.Frames}.png'))
+      else if (AutoLoadFrame >= 0) and (Machine.Frames > QWord(AutoLoadFrame) + 80)
+        and (Machine.Frames <= QWord(AutoLoadFrame) + 300) and ((Machine.Frames mod 10) = 0) then
+        ExportImage(Image, PAnsiChar($'{ScreenshotDir}/frame-{Machine.Frames}.png'));
     end;
   end;
 
   StopAudioStream(AudioStream);
   UnloadAudioStream(AudioStream);
   CloseAudioDevice;
-
-  UnloadShader(Shader);
-  UnloadImage(Image);
-  UnloadTexture(Video);
-  UnloadRenderTexture(Target);
 
   Config.WriteBool('Window', 'Fullscreen', Fullscreen);
   if not Fullscreen then
@@ -1022,6 +838,11 @@ begin
   Config.WriteInteger('Window', 'TVMode', TVMode);
 
   Config.WriteFloat('Audio', 'Volume', Volume);
+
+  UnloadShader(Shader);
+  UnloadRenderTexture(Target);
+  UnloadTexture(Video);
+  UnloadImage(Image);
 
   CloseWindow;
 end;
