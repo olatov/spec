@@ -5,7 +5,7 @@ unit Spectrum;
 interface
 
 uses
-  Classes, SysUtils, Math,
+  Classes, SysUtils, Math, System.IOUtils,
   Z80;
 
 type
@@ -39,11 +39,15 @@ type
     property Power: Boolean read FPower write SetPower;
     property INT: Boolean read FINT write SetINT;
     constructor Create;
+    procedure Reset;
     procedure Wait(ACycles: Integer);
     procedure Tick(ACycles: Integer);
     procedure BeginFrame;
     procedure RunScanline;
+    procedure LoadZ80(AFilename: String);
     procedure LoadZ80(AStream: TStream);
+    procedure SaveZ80(AFilename: String);
+    procedure SaveZ80(AStream: TStream);
   end;
 
 {$embedbytes ROMBytes '48.rom'}
@@ -72,7 +76,15 @@ end;
 
 constructor TZXSpectrum48.Create;
 begin
+  Reset;
+end;
+
+procedure TZXSpectrum48.Reset;
+begin
+  FFrames := 0;
+  FCycles := 0;
   Move(ROMBytes, ROM, SizeOf(ROMBytes));
+  z80_instant_reset(@CPU);
 end;
 
 procedure TZXSpectrum48.Wait(ACycles: Integer); inline;
@@ -105,6 +117,14 @@ begin
 
   Inc(FCurrentScanline);
   FContended := InRange(FCurrentScanline, 64, 255);
+end;
+
+procedure TZXSpectrum48.LoadZ80(AFilename: String);
+var
+  Stream: TFileStream;
+begin
+  Stream := autofree TFile.OpenRead(AFilename);
+  LoadZ80(Stream);
 end;
 
 procedure TZXSpectrum48.BeginFrame;
@@ -168,6 +188,8 @@ var
   end;
 
 begin
+  Reset;
+
   CPU.af.bytes.high := AStream.ReadByte;
   CPU.af.bytes.low := AStream.ReadByte;
   CPU.bc.word := AStream.ReadWord;
@@ -247,5 +269,49 @@ begin
   end;
 end;
 
+procedure TZXSpectrum48.SaveZ80(AFilename: String);
+var
+  Stream: TFileStream;
+begin
+  Stream := autofree TFile.OpenOrCreate(AFilename);
+  SaveZ80(Stream);
+end;
+
+procedure TZXSpectrum48.SaveZ80(AStream: TStream);
+var
+  Data: Byte = 0;
+begin
+  with AStream do
+  begin
+    WriteByte(CPU.af.bytes.high);
+    WriteByte(CPU.af.bytes.low);
+    WriteWord(CPU.bc.word);
+    WriteWord(CPU.hl.word);
+    WriteWord(CPU.pc.word);
+    WriteWord(CPU.sp.word);
+    WriteByte(CPU.i);
+    WriteByte(CPU.r);
+
+    Data.Bits[0] := CPU.r.Bits[7];
+    Data := Data or (BorderColorIndex shl 1);
+    Data.Bits[5] := False;  { Uncompressed }
+    WriteByte(Data);
+
+    WriteWord(CPU.de.word);
+    WriteWord(CPU.bc_.word);
+    WriteWord(CPU.de_.word);
+    WriteWord(CPU.hl_.word);
+    WriteByte(CPU.af_.bytes.high);
+    WriteByte(CPU.af_.bytes.low);
+    WriteWord(CPU.ix_iy[1].word);
+    WriteWord(CPU.ix_iy[0].word);
+
+    WriteByte(CPU.iff1);
+    WriteByte(CPU.iff2);
+    WriteByte(CPU.im);
+
+    WriteBuffer(RAM, SizeOf(RAM));
+  end;
+end;
 
 end.

@@ -78,6 +78,31 @@ var
   Joystick: TJoystick;
   {$embedstr ShaderText 'shader.fs'}
 
+function GetQuickSaveFilename: String;
+var
+  Path: String = '';
+begin
+  Path := GetAppConfigDir(False);
+  TDirectory.CreateDirectory(Path);
+  Result := TPath.Combine(Path, 'quicksave.z80');
+end;
+
+procedure QuickSave;
+begin
+  Machine.SaveZ80(GetQuickSaveFilename);
+end;
+
+function QuickLoad: Boolean;
+var
+  Filename: String;
+begin
+  Filename := GetQuickSaveFilename;
+  if not TFile.Exists(Filename) then Exit(False);
+
+  Machine.LoadZ80(Filename);
+  Result := True;
+end;
+
 { Advances the audio-sample cursor to absolute T-state NewT, treating AudioPin as having
   held constant since the last call. Rather than snapshotting one instant per output sample
   (which aliases high-pitched beeper toggling - e.g. Wham!'s PWM-style tricks - into audible
@@ -442,7 +467,6 @@ var
   Volume: Single;
   S: String;
   Config: TIniFile;
-  Stream: TFileStream;
 
   procedure SetVolume(AVolume: Single; K: Single = 4);
   begin
@@ -450,7 +474,7 @@ var
     SetAudioStreamVolume(AudioStream, (Exp(K * Volume) - 1) / (Exp(K) - 1));
   end;
 
-  procedure DrawScanline(ALine: Integer); inline;
+  procedure RenderScanline(ALine: Integer); inline;
   var
     X, Y, Offset: Integer;
   begin
@@ -609,11 +633,11 @@ begin
       Up := KEY_UP;
       Down := KEY_DOWN;
       Fire1 := KEY_LEFT_ALT;
-      Fire2 := KEY_SPACE;
+      Fire2 := KEY_RIGHT_ALT;
     end;
   end;
 
-  Config := autofree TIniFile.Create(GetAppConfigFile(False));
+  Config := autofree TIniFile.Create(GetAppConfigFile(False, True));
   Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
 
   SetTraceLogLevel(LOG_ERROR);
@@ -621,13 +645,10 @@ begin
   if Config.ReadBool('Window', 'HiDPI', False) then
     SetConfigFlags(FLAG_WINDOW_HIGHDPI);
 
-  if Fullscreen then
-    InitWindow(720, 576, 'Spec')
-  else
-    InitWindow(
-      Config.ReadInteger('Window', 'Width', 720),
-      Config.ReadInteger('Window', 'Height', 576),
-      'Spec');
+  InitWindow(
+    Config.ReadInteger('Window', 'Width', 720),
+    Config.ReadInteger('Window', 'Height', 576),
+    'Spec');
 
   TVMode := Config.ReadInteger('Window', 'TVMode', 7);
 
@@ -682,12 +703,7 @@ begin
     end else
     begin
       if not Snapshot.ToLower.EndsWith('.z80') then Snapshot := Snapshot + '.z80';
-      Stream := TFile.OpenRead(Snapshot);
-      try
-        Machine.LoadZ80(Stream);
-      finally
-        FreeAndNil(Stream);
-      end;
+      Machine.LoadZ80(Snapshot);
     end;
   end;
 
@@ -701,6 +717,15 @@ begin
 
   while not WindowShouldClose do
   begin
+    if IsKeyPressed(KEY_F2) then
+    begin
+      QuickSave;
+      SetOSD('Saved');
+    end;
+
+    if IsKeyPressed(KEY_F3) and QuickLoad then
+      SetOSD('Loaded');
+
     if IsKeyPressed(KEY_F7) or IsKeyPressed(KEY_F8) then
     begin
       SetVolume(Volume
@@ -776,7 +801,7 @@ begin
       }
       for I := 1 to 312 do
       begin
-        DrawScanline(Machine.CurrentScanline);
+        RenderScanline(Machine.CurrentScanline);
         Machine.RunScanline;
       end;
 
