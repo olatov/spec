@@ -103,6 +103,10 @@
       <Unit>
         <Filename Value="Tape.pas"/>
       </Unit>
+      <Unit>
+        <Filename Value="spectrum.pas"/>
+        <UnitName Value="Spectrum"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
