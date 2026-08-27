@@ -15,6 +15,7 @@ type
     FFullscreen: Boolean;
     Config: TIniFile;
     procedure AdvanceAudio(NewT: Integer);
+    procedure TapeSaved(const AFilename: String);
     function QuickLoad: Boolean;
     procedure QuickSave;
     procedure SetFullscreen(AValue: Boolean);
@@ -78,10 +79,10 @@ const
   INPUT_KEY_DOWN = 2;
 
 var
-  { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_SCREENSHOT_DIR
-    env vars): scripts the LOAD "" ENTER keystrokes via raylib automation
-    events and dumps screenshots, so tape loading can be verified without a
-    real keyboard/window focus. }
+  { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_AUTOSAVE env
+    vars): scripts the LOAD or SAVE keystrokes via raylib automation events,
+    so tape loading and saving can be verified without a real keyboard or
+    window focus. }
   AutoLoadFrame: Int64 = -1;
   ScreenshotDir: String = '';
   PendingScreenshot: Boolean = False;
@@ -150,11 +151,13 @@ end;
   spurious tones), each finished bucket is written as the pin's HIGH duty cycle over its
   exact T-state span: a boxcar low-pass filter matched to the sample rate.
 
-  When TapeSound is on and a WAV tape is running, the tape signal's duty cycle over the
-  same span is blended in - the real machine's amplifier hears both, which is why loading
-  screeches. Mixing by weight (rather than summing) keeps the result inside the bucket
-  duration, so the sample can never clip; with the tape stopped the beeper keeps the full
-  weight and the output is bit-identical to before. }
+  When TapeSound is on and a tape is moving - a WAV playing into EAR, or a SAVE driving
+  MIC - that signal's duty cycle over the same span is blended in. The real machine's
+  amplifier hears both, which is why loading and saving screech; SAVE in particular never
+  touches the speaker bit, so this mix is the only thing that makes it audible. Mixing by
+  weight (rather than summing) keeps the result inside the bucket duration, so the sample
+  can never clip; with the tape idle the beeper keeps the full weight and the output is
+  bit-identical to before. }
 
 procedure TApplication.AdvanceAudio(NewT: Integer);
   function BucketBoundary(Index: Integer): Integer; inline;
@@ -166,7 +169,7 @@ var
   NextBoundary, Duration, High: Integer;
   Mixing: Boolean;
 begin
-  Mixing := TapeSound and Machine.TapePlaying;
+  Mixing := TapeSound and (Machine.TapePlaying or Machine.Saving);
 
   while PrevTiming < SamplesPerFrame do
   begin
@@ -196,6 +199,11 @@ begin
 end;
 
 procedure SetOSD(AText: String; ADuration: Double = 2); forward;
+
+procedure TApplication.TapeSaved(const AFilename: String);
+begin
+  SetOSD($'Saved to {AFilename}', 4);
+end;
 
 procedure AutoKeyEvent(EventType: LongWord; Key: TKeyboardKey);
 var
@@ -227,6 +235,39 @@ begin
     29: AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
     39: AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
     42: AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
+  end;
+end;
+
+{ Types "1 REM" ENTER to get a non-empty program, then SAVE "t" ENTER and the
+  keypress the ROM waits for. The name is not optional - SAVE "" is rejected -
+  and an empty program would save a degenerate zero-length data block. }
+procedure RunAutoSaveScript(Rel: Int64);
+begin
+  case Rel of
+    0:   AutoKeyEvent(INPUT_KEY_DOWN, KEY_ONE);
+    3:   AutoKeyEvent(INPUT_KEY_UP, KEY_ONE);
+    8:   AutoKeyEvent(INPUT_KEY_DOWN, KEY_E);      { REM }
+    11:  AutoKeyEvent(INPUT_KEY_UP, KEY_E);
+    20:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
+    23:  AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
+
+    35:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_S);      { SAVE }
+    38:  AutoKeyEvent(INPUT_KEY_UP, KEY_S);
+    40:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    42:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
+    45:  AutoKeyEvent(INPUT_KEY_UP, KEY_P);
+    47:  AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
+    57:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_T);
+    60:  AutoKeyEvent(INPUT_KEY_UP, KEY_T);
+    70:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    72:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
+    75:  AutoKeyEvent(INPUT_KEY_UP, KEY_P);
+    77:  AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
+    87:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
+    90:  AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
+    { "Start tape, then press any key." }
+    120: AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
+    123: AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
   end;
 end;
 
@@ -341,6 +382,8 @@ begin
   TVType := Config.ReadInteger('Window', 'TVType', TVTypeColor) mod Length(Shaders);
   Overscan := Config.ReadInteger('Window', 'Overscan', 16);
   TapeSound := Config.ReadBool('Tape', 'Sound', True);
+  Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
+  Machine.OnTapeSaved := @TapeSaved;
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
@@ -381,6 +424,8 @@ var
   Dest: TRectangle;
 begin
   Machine.Power := True;
+
+  if GetEnvironmentVariable('SPEC_AUTOSAVE') <> '' then AutoLoadFrame := 100;
 
   if ParamCount > 0 then Snapshot := ParamStr(1);
 
@@ -429,6 +474,7 @@ begin
     end;
 
     UpdateTexture(Video, Image.data);
+
 
     BeginTextureMode(Target);
       DrawTexturePRO(Video,
@@ -626,7 +672,10 @@ end;
 procedure TApplication.RenderAudioFrame;
 begin
   if AutoLoadFrame >= 0 then
-    RunAutoLoadScript(Int64(Machine.Frames) - AutoLoadFrame);
+    if GetEnvironmentVariable('SPEC_AUTOSAVE') <> '' then
+      RunAutoSaveScript(Int64(Machine.Frames) - AutoLoadFrame)
+    else
+      RunAutoLoadScript(Int64(Machine.Frames) - AutoLoadFrame);
 
   AdvanceAudio(TStatesPerFrame);
   PrevTiming := 0;
@@ -659,6 +708,7 @@ begin
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
   Config.WriteBool('Tape', 'Sound', TapeSound);
+  Config.WriteBool('Tape', 'Save', Machine.SaveToWav);
 end;
 
 end.

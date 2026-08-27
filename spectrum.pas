@@ -31,6 +31,7 @@ type
   end;
 
   TAdvanceAudioNotify = procedure(ANewT: Integer) of object;
+  TTapeSavedNotify = procedure(const AFilename: String) of object;
 
   TZXSpectrum48 = class
   private
@@ -55,7 +56,6 @@ type
     FWavStartLevel: Boolean;
     FWavCursor: Integer;
     FWavLoaded: Boolean;
-    FWavHookOpcode: Byte;        { the LD-BYTES opcode displaced by the tripwire hook }
     FTapePlaying: Boolean;
     FTapeArmed: Boolean;         { auto-play on the next EAR read (set on LD-BYTES entry) }
     FTapeBaseTState: QWord;      { machine T-state that maps to tape position 0 }
@@ -64,6 +64,23 @@ type
                                    be resolved against the tape clock }
     FTapePausedT: QWord;         { tape-relative T-state to resume playback from }
     FTapeLastEarFrame: QWord;    { frame number of the most recent EAR poll }
+    { SAVE capture: the ROM's real SA-BYTES runs and toggles the MIC line; we
+      timestamp every transition and render the result as a .WAV. }
+    FSaveEnabled: Boolean;
+    FSaveEdges: array of QWord;  { absolute machine T-states of MIC transitions }
+    FSaveCount: Integer;
+    FSaveStartLevel: Boolean;
+    FSaveArmed: Boolean;         { SA-BYTES seen, waiting for the first MIC edge }
+    FSaveRecording: Boolean;
+    FSaveLastEdgeFrame: QWord;
+    FSaveName: String;
+    procedure ArmSave;
+    procedure RecordMicEdge;
+    procedure FinishSave;
+    function WriteSaveWAV(const AFilename: String): Boolean;
+    { Picks the output path from the Spectrum filename captured at SA-BYTES,
+      falling back to a generic name, and never overwrites an existing file. }
+    function SaveOutputPath: String;
     procedure SetBorderColorIndex(AValue: TZXColorIndex);
     procedure SetINT(AValue: Boolean);
     procedure SetPower(AValue: Boolean);
@@ -88,8 +105,10 @@ type
     ROM: array[0..$3FFF] of Byte;
     RAM: array[$4000..$FFFF] of Byte;
     AudioPin: Boolean;
+    MicPin: Boolean;      { port $FE bit 3 - what SAVE modulates }
     Joystick: TJoystick;
     AdvanceAudio: TAdvanceAudioNotify;
+    OnTapeSaved: TTapeSavedNotify;
     function OnMemoryRead(AAddress: Word): Byte;
     procedure OnMemoryWrite(AAddress: Word; AValue: Byte);
     function OnIORead(AAddress: Word): Byte;
@@ -107,6 +126,11 @@ type
     property TapeBlockCount: Integer read GetTapeBlockCount;
     property WavLoaded: Boolean read FWavLoaded;
     property TapePlaying: Boolean read FTapePlaying;
+    { True while a SAVE is streaming out - drives the speaker mix. }
+    property Saving: Boolean read FSaveRecording;
+    { Whether a completed SAVE is written out as a .WAV. The MIC line is
+      captured (and heard) either way. }
+    property SaveToWav: Boolean read FSaveEnabled write FSaveEnabled;
     constructor Create;
     procedure Reset;
     procedure Wait(ACycles: Integer);
@@ -144,8 +168,12 @@ type
 implementation
 
 const
-  { Entry point of the 48K ROM's LD-BYTES routine. }
+  { Entry points of the 48K ROM's tape routines. }
   LDBytesAddress = $0556;
+  SABytesAddress = $04C2;
+
+  { Sample rate of the .WAV files SAVE produces. }
+  WavSampleRate = 44100;
 
   { 48K Spectrum CPU clock - the timebase the tape edge list is expressed in. }
   CPUClockHz = 3500000;
@@ -154,6 +182,11 @@ const
     it holds position through inter-block gaps and menu screens instead of
     running past the next block's pilot tone. }
   TapeSilenceFrames = 50;
+
+  { A SAVE is finished once MIC has been quiet this long. Must exceed the
+    ROM's own 1-second (50 frame) pause between the header and data blocks,
+    or each SAVE would land in two separate files. }
+  SaveSilenceFrames = 100;
 
   EarBit = %01000000;
 
@@ -426,8 +459,16 @@ begin
     $FE:
       begin
         BorderColorIndex := AValue and %111;
+        { Flush the audio bucket before either pin moves - this same write is
+          the only thing that can move them. }
         if Assigned(AdvanceAudio) then AdvanceAudio(Cycles + CPU.cycles);
         AudioPin := AValue.Bits[4];
+
+        if AValue.Bits[3] <> MicPin then
+        begin
+          MicPin := AValue.Bits[3];
+          if FSaveArmed or FSaveRecording then RecordMicEdge;
+        end;
       end;
   end;
 end;
@@ -449,9 +490,11 @@ begin
         flags away, and $05A9 later reads that Z flag back to tell "still
         on the flag byte" from "into the data". Re-creating the INC in
         Pascal would move D without moving the flags, and every block's
-        flag byte would be misrouted. }
+        flag byte would be misrouted.
+
+        Read from ROMBytes, not ROM[] - the latter holds the hook byte. }
       FTapeArmed := True;
-      Exit(FWavHookOpcode);
+      Exit(ROMBytes[LDBytesAddress]);
     end;
 
     HandleLoadTrap;
@@ -463,6 +506,15 @@ begin
       HandleLoadTrap's RET simulation set it, instead of also executing
       one stray extra instruction there first. }
     Result := Z80_HOOK;
+  end
+  else if AAddress = SABytesAddress then
+  begin
+    { SAVE tripwire. Like the WAV load hook this only watches - the real
+      SA-BYTES runs and modulates MIC itself, so custom savers and the ROM
+      alike come out right. Its displaced opcode is LD HL,$053F, whose
+      operand bytes are still in place at $04C3/$04C4. }
+    ArmSave;
+    Result := ROMBytes[SABytesAddress];
   end
   else
     { Not our trap address - this is a real (if useless) LD H,H
@@ -532,8 +584,10 @@ begin
   FTotalTStates := 0;
   Move(ROMBytes, ROM, SizeOf(ROMBytes));
 
-  { A fresh ROM image loses the LD-BYTES patch; reapply it if a tape is loaded. }
+  { A fresh ROM image loses the tape patches; reapply them. The SA-BYTES
+    tripwire is unconditional - it costs nothing when nothing is saving. }
   if FTapeLoaded or FWavLoaded then ROM[LDBytesAddress] := Z80_HOOK;
+  ROM[SABytesAddress] := Z80_HOOK;
 
   { The tape clock is tied to FTotalTStates, which just restarted. }
   FTapePlaying := False;
@@ -606,6 +660,9 @@ begin
 
   if FTapePlaying and (FFrames - FTapeLastEarFrame > TapeSilenceFrames) then
     TapePause;
+
+  if FSaveRecording and (FFrames - FSaveLastEdgeFrame > SaveSilenceFrames) then
+    FinishSave;
 end;
 
 procedure TZXSpectrum48.LoadZ80(AStream: TStream);
@@ -949,7 +1006,18 @@ var
   Level: Boolean;
 begin
   Result := 0;
-  if not FTapePlaying or (AToT <= AFromT) then Exit;
+  if AToT <= AFromT then Exit;
+
+  { Saving: MIC is a live pin that only moves on an OUT to $FE - the very
+    write that flushes the audio bucket - so the span is a flat level and
+    needs no edge walk. }
+  if FSaveRecording then
+  begin
+    if MicPin then Result := AToT - AFromT;
+    Exit;
+  end;
+
+  if not FTapePlaying then Exit;
 
   A := FFrameBaseTState + QWord(AFromT);
   B := FFrameBaseTState + QWord(AToT);
@@ -1042,6 +1110,165 @@ end;
 function TZXSpectrum48.TapeLengthSeconds: Double;
 begin
   Result := WavLengthTStates / CPUClockHz;
+end;
+
+{ SA-BYTES has been entered. Note the Spectrum filename while it's still in
+  memory - a header block arrives with the flag byte $00 in A, 17 in DE and
+  IX pointing at [type, name[10], ...] - then wait for MIC to start moving. }
+procedure TZXSpectrum48.ArmSave;
+var
+  I: Integer;
+  Ch: Char;
+begin
+  if not FSaveRecording then
+  begin
+    FSaveCount := 0;
+    FSaveName := '';
+  end;
+
+  if (CPU.af.bytes.high = $00) and (CPU.de.word = 17) then
+  begin
+    for I := 1 to 10 do
+    begin
+      Ch := Char(OnMemoryRead(CPU.ix_iy[0].word + I));
+      { Spectrum names may hold anything, including characters no filesystem
+        will take; keep the safe ones and drop the rest. }
+      if Ch in ['A'..'Z', 'a'..'z', '0'..'9', ' ', '-', '_', '.'] then
+        FSaveName := FSaveName + Ch;
+    end;
+    FSaveName := FSaveName.Trim;
+  end;
+
+  FSaveArmed := True;
+end;
+
+procedure TZXSpectrum48.RecordMicEdge;
+begin
+  if not FSaveRecording then
+  begin
+    { The pin has just flipped, so the level held before this edge is the
+      opposite of what it now reads. }
+    FSaveStartLevel := not MicPin;
+    FSaveRecording := True;
+    FSaveArmed := False;
+  end;
+
+  FSaveLastEdgeFrame := FFrames;
+  if not FSaveEnabled then Exit;   { still heard, just not written }
+
+  if FSaveCount >= Length(FSaveEdges) then
+    SetLength(FSaveEdges, Max(1024, Length(FSaveEdges) * 2));
+  FSaveEdges[FSaveCount] := CurrentTStates;
+  Inc(FSaveCount);
+end;
+
+function TZXSpectrum48.SaveOutputPath: String;
+var
+  Base: String;
+  N: Integer;
+begin
+  Base := if FSaveName <> '' then FSaveName else 'spec-save';
+  Result := Base + '.wav';
+
+  N := 1;
+  while TFile.Exists(Result) do
+  begin
+    Result := $'{Base}-{N}.wav';
+    Inc(N);
+  end;
+end;
+
+procedure TZXSpectrum48.FinishSave;
+var
+  Filename: String;
+begin
+  FSaveRecording := False;
+  FSaveArmed := False;
+
+  if FSaveEnabled and (FSaveCount >= 2) then
+  begin
+    Filename := SaveOutputPath;
+    if WriteSaveWAV(Filename) and Assigned(OnTapeSaved) then
+      OnTapeSaved(Filename);
+  end;
+
+  FSaveCount := 0;
+  FSaveName := '';
+end;
+
+{ Renders the captured MIC transitions as 8-bit unsigned mono PCM - the same
+  shape LoadWAV reads back, so a saved file re-loads. }
+function TZXSpectrum48.WriteSaveWAV(const AFilename: String): Boolean;
+const
+  { Enough tail that the final pulse isn't clipped by the end of the file. }
+  TrailingSamples = WavSampleRate div 5;
+var
+  FS: TFileStream;
+  Data: TBytes;
+  Base: QWord;
+  Total, Idx, Next, I: Integer;
+  Level: Boolean;
+
+  function SampleOf(ATState: QWord): Integer;
+  begin
+    Result := (Int64(ATState - Base) * WavSampleRate) div CPUClockHz;
+  end;
+
+  procedure Run(AUpTo: Integer);
+  begin
+    if AUpTo > Total then AUpTo := Total;
+    if AUpTo > Idx then
+    begin
+      FillByte(Data[Idx], AUpTo - Idx, if Level then 255 else 0);
+      Idx := AUpTo;
+    end;
+  end;
+
+  procedure Tag(const ATag: String);
+  begin
+    FS.WriteBuffer(ATag[1], 4);
+  end;
+
+begin
+  Result := False;
+  if FSaveCount < 2 then Exit;
+
+  Base := FSaveEdges[0];
+  Total := SampleOf(FSaveEdges[FSaveCount - 1]) + TrailingSamples;
+  if Total <= 0 then Exit;
+
+  SetLength(Data, Total);
+  Level := FSaveStartLevel;
+  Idx := 0;
+
+  for I := 0 to FSaveCount - 1 do
+  begin
+    Run(SampleOf(FSaveEdges[I]));
+    Level := not Level;
+  end;
+  Run(Total);
+
+  FS := autofree TFile.OpenOrCreate(AFilename);
+  FS.Size := 0;
+
+  Tag('RIFF');
+  FS.WriteDWord(36 + Total);
+  Tag('WAVE');
+
+  Tag('fmt ');
+  FS.WriteDWord(16);
+  FS.WriteWord(1);                { PCM }
+  FS.WriteWord(1);                { mono }
+  FS.WriteDWord(WavSampleRate);
+  FS.WriteDWord(WavSampleRate);   { byte rate = rate * blockAlign }
+  FS.WriteWord(1);                { block align }
+  FS.WriteWord(8);                { bits per sample }
+
+  Tag('data');
+  FS.WriteDWord(Total);
+  FS.WriteBuffer(Data[0], Total);
+
+  Result := True;
 end;
 
 function TZXSpectrum48.LoadWAV(const AFilename: String): Boolean;
@@ -1188,9 +1415,6 @@ begin
   if Result then
   begin
     FWavLoaded := True;
-    { From the pristine image, not ROM[] - a second LoadWAV would otherwise
-      capture the hook byte left by the first. }
-    FWavHookOpcode := ROMBytes[LDBytesAddress];
     ROM[LDBytesAddress] := Z80_HOOK;
 
     { A WAV replaces any .TAP fast-load tape. }
