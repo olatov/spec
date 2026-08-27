@@ -43,9 +43,24 @@ type
     FFrames: QWord;
     FINT: Boolean;
     FPower: Boolean;
+    FTotalTStates: QWord;
+    { .TAP fast-load trap state. }
     FTapeBlocks: array of TBytes;
     FTapeCursor: Integer;
     FTapeLoaded: Boolean;
+    { .WAV real-time EAR-line playback. FWavEdges holds the cumulative,
+      tape-relative T-state of every signal transition; the level between
+      edge i-1 and edge i is FWavStartLevel xor Odd(i). }
+    FWavEdges: array of QWord;
+    FWavStartLevel: Boolean;
+    FWavCursor: Integer;
+    FWavLoaded: Boolean;
+    FWavHookOpcode: Byte;        { the LD-BYTES opcode displaced by the tripwire hook }
+    FTapePlaying: Boolean;
+    FTapeArmed: Boolean;         { auto-play on the next EAR read (set on LD-BYTES entry) }
+    FTapeBaseTState: QWord;      { machine T-state that maps to tape position 0 }
+    FTapePausedT: QWord;         { tape-relative T-state to resume playback from }
+    FTapeLastEarFrame: QWord;    { frame number of the most recent EAR poll }
     procedure SetBorderColorIndex(AValue: TZXColorIndex);
     procedure SetINT(AValue: Boolean);
     procedure SetPower(AValue: Boolean);
@@ -55,6 +70,15 @@ type
       the RET back to SA_LD_RET that the real routine would perform. Runs as
       an instantaneous trap, not real bus activity. }
     procedure HandleLoadTrap;
+    { Absolute monotonic T-state, valid inside any CPU callback (z80_run
+      resets CPU.cycles per call and FTotalTStates excludes the in-progress
+      Tick). }
+    function CurrentTStates: QWord;
+    function WavLengthTStates: QWord;
+    procedure SeekWavCursor(ATapeT: QWord);
+    { Current tape signal level; also drives auto start/stop. Call once per
+      genuine ULA read of port $FE. }
+    function TapeEar: Boolean;
   public
     CPU: TZ80;
     ROM: array[0..$3FFF] of Byte;
@@ -77,6 +101,8 @@ type
     property INT: Boolean read FINT write SetINT;
     property TapeCursor: Integer read FTapeCursor;
     property TapeBlockCount: Integer read GetTapeBlockCount;
+    property WavLoaded: Boolean read FWavLoaded;
+    property TapePlaying: Boolean read FTapePlaying;
     constructor Create;
     procedure Reset;
     procedure Wait(ACycles: Integer);
@@ -93,6 +119,17 @@ type
       fast-load trap fires. Returns False (leaving the tape empty and the ROM
       unpatched) if the file can't be read or contains no blocks. }
     function LoadTAP(const AFilename: String): Boolean;
+    { Decodes a PCM .WAV file (8/16-bit, mono or stereo) into a transition
+      list for real-time playback on the EAR line, and patches LD-BYTES so
+      playback auto-starts when a load begins. The ROM (or a turbo loader)
+      times the edges itself. Returns False if the file isn't a usable PCM
+      WAV or decodes to no signal. }
+    function LoadWAV(const AFilename: String): Boolean;
+    procedure TapePlay;
+    procedure TapePause;
+    procedure TapeStop;   { pause and rewind to the start }
+    function TapePositionSeconds: Double;
+    function TapeLengthSeconds: Double;
   end;
 
 {$embedbytes ROMBytes 'rom/48.rom'}
@@ -102,6 +139,16 @@ implementation
 const
   { Entry point of the 48K ROM's LD-BYTES routine. }
   LDBytesAddress = $0556;
+
+  { 48K Spectrum CPU clock - the timebase the tape edge list is expressed in. }
+  CPUClockHz = 3500000;
+
+  { Auto-pause the WAV tape after this many frames without an EAR poll, so
+    it holds position through inter-block gaps and menu screens instead of
+    running past the next block's pilot tone. }
+  TapeSilenceFrames = 50;
+
+  EarBit = %01000000;
 
 function FetchCallback(Context: Pointer; Address: UInt16): UInt8; cdecl;
 begin
@@ -352,6 +399,14 @@ begin
   begin
     if Contended then Wait(2);
     Result := Result and PollKeyboard(Hi(AAddress));
+
+    { EAR (bit 6): fed from the WAV tape while one is loaded, so the ROM /
+      turbo loader can time the edges. Overrides the idle "no signal" 1. }
+    if FWavLoaded then
+      if TapeEar then
+        Result := Result or EarBit
+      else
+        Result := Result and not Byte(EarBit);
   end;
 
   if not AAddress.Bits[5] then
@@ -374,7 +429,26 @@ function TZXSpectrum48.OnHook(AAddress: Word): Byte;
 begin
   if AAddress = LDBytesAddress then
   begin
+    if FWavLoaded then
+    begin
+      { WAV mode: the real LD-BYTES has to run, polling the EAR line and
+        timing the edges itself. The hook is only a tripwire telling us a
+        load has begun, so the tape auto-plays from here.
+
+        Returning the displaced opcode (rather than Z80_HOOK) makes the
+        core dispatch it from its own instruction table - see hook's INSN
+        in Z80.c. That matters: the displaced opcode is INC D, which is in
+        LD-BYTES purely to reset the Z flag before EX AF,AF' banks the
+        flags away, and $05A9 later reads that Z flag back to tell "still
+        on the flag byte" from "into the data". Re-creating the INC in
+        Pascal would move D without moving the flags, and every block's
+        flag byte would be misrouted. }
+      FTapeArmed := True;
+      Exit(FWavHookOpcode);
+    end;
+
     HandleLoadTrap;
+
     { The Z80 core treats the hook's return value as a fresh opcode to
       dispatch immediately UNLESS it's Z80_HOOK (see hook's INSN in
       Z80.c) - returning Z80_HOOK is what tells it "the hook fully
@@ -448,10 +522,18 @@ procedure TZXSpectrum48.Reset;
 begin
   FFrames := 0;
   FCycles := 0;
+  FTotalTStates := 0;
   Move(ROMBytes, ROM, SizeOf(ROMBytes));
 
   { A fresh ROM image loses the LD-BYTES patch; reapply it if a tape is loaded. }
-  if FTapeLoaded then ROM[LDBytesAddress] := Z80_HOOK;
+  if FTapeLoaded or FWavLoaded then ROM[LDBytesAddress] := Z80_HOOK;
+
+  { The tape clock is tied to FTotalTStates, which just restarted. }
+  FTapePlaying := False;
+  FTapeArmed := False;
+  FTapeBaseTState := 0;
+  FTapePausedT := 0;
+  FWavCursor := 0;
 end;
 
 procedure TZXSpectrum48.Wait(ACycles: Integer); inline;
@@ -467,6 +549,7 @@ begin
   Fact := z80_run(@CPU, Requested);
   FOvershoot := Fact - Requested;
   Inc(FCycles, Fact);
+  Inc(FTotalTStates, Fact);
 end;
 
 procedure TZXSpectrum48.RunScanline; inline;
@@ -512,6 +595,9 @@ begin
   Inc(FFrames);
   FCurrentScanline := 0;
   FFlashPhase := Odd(Frames div 16);
+
+  if FTapePlaying and (FFrames - FTapeLastEarFrame > TapeSilenceFrames) then
+    TapePause;
 end;
 
 procedure TZXSpectrum48.LoadZ80(AStream: TStream);
@@ -731,6 +817,12 @@ begin
   begin
     FTapeLoaded := True;
     ROM[LDBytesAddress] := Z80_HOOK;
+
+    { A .TAP replaces any WAV tape - the two loaders are mutually exclusive. }
+    FWavLoaded := False;
+    FTapePlaying := False;
+    FTapeArmed := False;
+    SetLength(FWavEdges, 0);
   end;
 end;
 
@@ -801,6 +893,258 @@ begin
   RetHi := OnMemoryRead(CPU.sp.word + 1);
   CPU.sp.word := CPU.sp.word + 2;
   CPU.pc.word := RetLo or (Word(RetHi) shl 8);
+end;
+
+function TZXSpectrum48.CurrentTStates: QWord; inline;
+begin
+  Result := FTotalTStates + CPU.cycles;
+end;
+
+function TZXSpectrum48.WavLengthTStates: QWord;
+begin
+  if Length(FWavEdges) = 0 then
+    Result := 0
+  else
+    Result := FWavEdges[High(FWavEdges)];
+end;
+
+procedure TZXSpectrum48.SeekWavCursor(ATapeT: QWord);
+var
+  Lo, Hi, Mid: Integer;
+begin
+  { Leave FWavCursor at the first edge strictly after ATapeT. }
+  Lo := 0;
+  Hi := Length(FWavEdges);
+  while Lo < Hi do
+  begin
+    Mid := (Lo + Hi) div 2;
+    if FWavEdges[Mid] <= ATapeT then Lo := Mid + 1 else Hi := Mid;
+  end;
+  FWavCursor := Lo;
+end;
+
+function TZXSpectrum48.TapeEar: Boolean;
+var
+  T: QWord;
+begin
+  FTapeLastEarFrame := FFrames;
+
+  if FTapeArmed then
+  begin
+    FTapeArmed := False;
+    TapePlay;
+  end;
+
+  if not FTapePlaying then Exit(False);
+
+  T := CurrentTStates - FTapeBaseTState;
+
+  while (FWavCursor < Length(FWavEdges)) and (FWavEdges[FWavCursor] <= T) do
+    Inc(FWavCursor);
+
+  if FWavCursor >= Length(FWavEdges) then
+  begin
+    TapeStop;
+    Exit(False);
+  end;
+
+  Result := FWavStartLevel xor Odd(FWavCursor);
+end;
+
+procedure TZXSpectrum48.TapePlay;
+begin
+  if not FWavLoaded or FTapePlaying then Exit;
+
+  if FTapePausedT >= WavLengthTStates then FTapePausedT := 0; { restart after the end }
+  FTapeBaseTState := CurrentTStates - FTapePausedT;
+  SeekWavCursor(FTapePausedT);
+  FTapePlaying := True;
+  FTapeLastEarFrame := FFrames;
+end;
+
+procedure TZXSpectrum48.TapePause;
+begin
+  if not FTapePlaying then Exit;
+  FTapePausedT := CurrentTStates - FTapeBaseTState;
+  FTapePlaying := False;
+end;
+
+procedure TZXSpectrum48.TapeStop;
+begin
+  FTapePlaying := False;
+  FTapeArmed := False;
+  FTapePausedT := 0;
+  FWavCursor := 0;
+end;
+
+function TZXSpectrum48.TapePositionSeconds: Double;
+var
+  T: QWord;
+begin
+  if FTapePlaying then T := CurrentTStates - FTapeBaseTState
+  else T := FTapePausedT;
+  Result := T / CPUClockHz;
+end;
+
+function TZXSpectrum48.TapeLengthSeconds: Double;
+begin
+  Result := WavLengthTStates / CPUClockHz;
+end;
+
+function TZXSpectrum48.LoadWAV(const AFilename: String): Boolean;
+var
+  FS: TFileStream;
+  ChunkID: array[0..3] of AnsiChar;
+  ChunkSize: LongWord;
+  AudioFormat, NumChannels, BitsPerSample, BlockAlign: Word;
+  SampleRate: LongWord;
+  DataStart, DataSize: Int64;
+  HaveFmt: Boolean;
+  Tag: String;
+
+  function ReadTag: String;
+  begin
+    if FS.Read(ChunkID[0], 4) <> 4 then Exit('');
+    SetString(Result, PAnsiChar(@ChunkID[0]), 4);
+  end;
+
+  { Run-length-encodes the thresholded mono signal into FWavEdges. A slow
+    EMA tracks the DC bias so off-centre cassette rips still resolve; a
+    hysteresis band rejects noise near the crossing. }
+  procedure BuildEdges;
+  const
+    FullScale = 32768;
+    Hysteresis = FullScale div 12;
+  var
+    Raw: TBytes;
+    FrameCount, Frame, Ch, Offset, BytesPerSample: Integer;
+    Acc, Sample: Integer;
+    BiasAcc: Int64;
+    Bias, Delta: Integer;
+    Level, Prev: Boolean;
+    Count: Integer;
+  begin
+    SetLength(Raw, DataSize);
+    FS.Position := DataStart;
+    if DataSize > 0 then FS.ReadBuffer(Raw[0], DataSize);
+
+    BytesPerSample := BitsPerSample div 8;
+    FrameCount := DataSize div BlockAlign;
+
+    BiasAcc := 0;
+    Level := False;
+    Prev := False;
+    FWavStartLevel := False;
+    Count := 0;
+    SetLength(FWavEdges, 0);
+
+    for Frame := 0 to FrameCount - 1 do
+    begin
+      Acc := 0;
+      for Ch := 0 to NumChannels - 1 do
+      begin
+        Offset := Frame * BlockAlign + Ch * BytesPerSample;
+        if BitsPerSample = 16 then
+          Inc(Acc, SmallInt(Raw[Offset] or (Word(Raw[Offset + 1]) shl 8)))
+        else
+          Inc(Acc, (Integer(Raw[Offset]) - 128) * 256); { 8-bit unsigned -> centred 16-bit }
+      end;
+      Sample := Acc div NumChannels;
+
+      BiasAcc := BiasAcc + (Sample - (BiasAcc div 4096));
+      Bias := BiasAcc div 4096;
+      Delta := Sample - Bias;
+
+      if Delta > Hysteresis then Level := True
+      else if Delta < -Hysteresis then Level := False;
+
+      if Level <> Prev then
+      begin
+        if Count >= Length(FWavEdges) then
+          SetLength(FWavEdges, Max(1024, Length(FWavEdges) * 2));
+        FWavEdges[Count] := (Int64(Frame) * CPUClockHz) div SampleRate;
+        Inc(Count);
+        Prev := Level;
+      end;
+    end;
+
+    SetLength(FWavEdges, Count);
+  end;
+
+begin
+  Result := False;
+  FWavLoaded := False;
+  FTapePlaying := False;
+  FTapeArmed := False;
+  FTapePausedT := 0;
+  FWavCursor := 0;
+  SetLength(FWavEdges, 0);
+
+  if not TFile.Exists(AFilename) then Exit;
+
+  FS := autofree TFile.OpenRead(AFilename);
+  if (ReadTag <> 'RIFF') then Exit;
+  FS.ReadDWord; { RIFF chunk size - ignored }
+  if (ReadTag <> 'WAVE') then Exit;
+
+  HaveFmt := False;
+  DataStart := -1;
+  DataSize := 0;
+  NumChannels := 0;
+  BlockAlign := 0;
+
+  while FS.Position + 8 <= FS.Size do
+  begin
+    Tag := ReadTag;
+    if Length(Tag) < 4 then Break;
+    ChunkSize := FS.ReadDWord;
+
+    if Tag = 'fmt ' then
+    begin
+      AudioFormat := FS.ReadWord;
+      NumChannels := FS.ReadWord;
+      SampleRate := FS.ReadDWord;
+      FS.ReadDWord;            { byte rate }
+      BlockAlign := FS.ReadWord;
+      BitsPerSample := FS.ReadWord;
+      HaveFmt := True;
+      if ChunkSize > 16 then FS.Position := FS.Position + (ChunkSize - 16);
+    end
+    else if Tag = 'data' then
+    begin
+      DataStart := FS.Position;
+      DataSize := ChunkSize;
+      if DataStart + DataSize > FS.Size then DataSize := FS.Size - DataStart;
+      FS.Position := FS.Position + ChunkSize + (ChunkSize and 1);
+    end
+    else
+      FS.Position := FS.Position + ChunkSize + (ChunkSize and 1);
+
+    if HaveFmt and (DataStart >= 0) then Break;
+  end;
+
+  if not HaveFmt or (DataStart < 0) then Exit;
+  if AudioFormat <> 1 then Exit;                     { PCM only }
+  if (BitsPerSample <> 8) and (BitsPerSample <> 16) then Exit;
+  if NumChannels < 1 then Exit;
+  if BlockAlign = 0 then BlockAlign := NumChannels * (BitsPerSample div 8);
+
+  BuildEdges;
+
+  Result := Length(FWavEdges) > 0;
+  if Result then
+  begin
+    FWavLoaded := True;
+    { From the pristine image, not ROM[] - a second LoadWAV would otherwise
+      capture the hook byte left by the first. }
+    FWavHookOpcode := ROMBytes[LDBytesAddress];
+    ROM[LDBytesAddress] := Z80_HOOK;
+
+    { A WAV replaces any .TAP fast-load tape. }
+    FTapeLoaded := False;
+    FTapeCursor := 0;
+    SetLength(FTapeBlocks, 0);
+  end;
 end;
 
 end.

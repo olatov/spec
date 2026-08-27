@@ -370,6 +370,14 @@ begin
         if Config.ReadBool('Tape', 'AutoLoad', True) or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
           AutoLoadFrame := 100; { give the ROM time to finish booting to BASIC first }
 
+    end else if Snapshot.ToLower.EndsWith('.wav', True) then
+    begin
+      { Real-time load: the ROM/turbo loader polls the EAR line; playback
+        auto-starts (and auto-pauses between blocks) once LD-BYTES runs. }
+      if Machine.LoadWAV(Snapshot) then
+        if Config.ReadBool('Tape', 'AutoLoad', True) or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
+          AutoLoadFrame := 100;
+
     end else
     begin
       if not Snapshot.ToLower.EndsWith('.z80') then Snapshot := Snapshot + '.z80';
@@ -507,6 +515,20 @@ begin
 
   if IsKeyPressed(KEY_F10) then Paused := not Paused;
   if IsKeyPressed(KEY_F11) then Fullscreen := not Fullscreen;
+
+  if IsKeyPressed(KEY_F12) and Machine.WavLoaded then
+  begin
+    if Machine.TapePlaying then
+    begin
+      Machine.TapePause;
+      SetOSD('Tape paused');
+    end
+    else
+    begin
+      Machine.TapePlay;
+      SetOSD($'Tape playing  {Machine.TapePositionSeconds:%.0f}/{Machine.TapeLengthSeconds:%.0f}s');
+    end;
+  end;
 end;
 
 procedure TApplication.RenderVideoFrame;
