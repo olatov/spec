@@ -44,6 +44,12 @@ type
     AttrTable: PAttrTable;
     Overscan: Integer;
     QuitRequested: Boolean;
+    { Frame T-state the border has been painted up to. The ULA lays the border
+      down in real time, so it is filled in lazily: whenever the colour is
+      about to change (and once at the end of the frame) everything the beam
+      has covered since the last catch-up is painted in the outgoing colour. }
+    BorderT: Integer;
+    procedure PaintBorderUntil(AT: Integer);
     procedure RunFrame;
     property Muted: Boolean read FMuted write SetMuted;
     property Paused: Boolean read GetPaused;
@@ -56,6 +62,7 @@ type
     procedure RenderVideoFrame;
     procedure RenderAudioFrame;
     procedure SaveConfig;
+    procedure OnBorderChange(AIndex: TZXColorIndex; ACycles: Integer);
   end;
 
 const
@@ -67,6 +74,24 @@ const
   ImageHeight = 288;
   ScanlineTStates = 224;
   TotalScanlines = 312;
+
+  { Visible window inside the raster. Rows above/below the screen band are
+    border across their whole width. }
+  ScreenLeft = 48;
+  ScreenTop = 48;
+  ScreenRight = ScreenLeft + 256;
+  ScreenBottom = ScreenTop + 192;
+
+  { The ULA emits two pixels per T-state, so a 224 T-state line is 448 pixel
+    slots wide: 48 left border, 256 display, 48 right border, then 96 slots of
+    horizontal blanking that never reach the image. }
+  SlotsPerScanline = ScanlineTStates * 2;
+
+  { T-states from the start of a visible row's left border to the start of that
+    row's display area. The left border of row N is therefore drawn during the
+    tail of line N-1. Nudge this to slide the border image horizontally against
+    the screen. }
+  BorderPhaseT = 24;
   TStatesPerFrame = ScanlineTStates * TotalScanlines;
   FPS = 50;
   AudioFrequency = 44100;
@@ -375,6 +400,7 @@ begin
   BuildAttrColors;
 
   Machine.AdvanceAudio := @AdvanceAudio;
+  Machine.BorderChange := @OnBorderChange;
 
   if Config.ReadBool('Window', 'HiDPI', False) then
     SetConfigFlags(FLAG_WINDOW_HIGHDPI);
@@ -718,15 +744,9 @@ procedure TApplication.RenderVideoFrame;
     Data: Byte;
     Pair: ^TPixelPair;
   begin
-    Y := ALine;
-    if not InRange(Y, 0, ImageHeight - 1) then Exit;
-
-    { Border }
-    FillDWord(Pixels^[Y * ImageWidth], ImageWidth,
-      PDWord(@Palette[Machine.BorderColorIndex])^);
-
-    { Main }
-    Y := Y - 48;
+    { The border is not this procedure's business - PaintBorderUntil lays it
+      down on the ULA's own clock. }
+    Y := ALine - ScreenTop;
     if not InRange(Y, 0, 191) then Exit;
 
     { Screen layout: third, then pixel Y within the character row, then
@@ -737,7 +757,7 @@ procedure TApplication.RenderVideoFrame;
     Inc(Offset, (Y mod 8) * 256);
 
     AttrOffset := 22528 + ((Y div 8) * 32);
-    PixelIndex := ((Y + 48) * ImageWidth) + 48;
+    PixelIndex := ((Y + ScreenTop) * ImageWidth) + ScreenLeft;
 
     for X := 0 to 31 do
     begin
@@ -762,6 +782,8 @@ var
 begin
   Machine.BeginFrame;
   AttrTable := @AttrColors[Ord(Machine.FlashPhase)];
+  { Row 0's left border is drawn before the frame's first display byte. }
+  BorderT := -BorderPhaseT;
 
   {
     RASTER:
@@ -776,6 +798,9 @@ begin
     RenderScanline(Machine.CurrentScanline);
     Machine.RunScanline;
   end;
+
+  { Nothing changed the colour after the last OUT - carry it to the bottom. }
+  PaintBorderUntil(TStatesPerFrame);
 end;
 
 procedure TApplication.RenderAudioFrame;
@@ -819,6 +844,61 @@ begin
   Config.WriteBool('Audio', 'Muted', Muted);
   Config.WriteBool('Tape', 'Sound', TapeSound);
   Config.WriteBool('Tape', 'Save', Machine.SaveToWav);
+end;
+
+{ Paints every border pixel the beam has swept between BorderT and AT in the
+  colour currently on the port, then parks the cursor at AT. Frame T-states map
+  onto the raster linearly at two pixel slots per T-state, so the run is walked
+  a row at a time, clipping each row to the visible image and stepping around
+  the display window. }
+procedure TApplication.PaintBorderUntil(AT: Integer);
+var
+  Color: DWord;
+  Slot, SlotEnd, RowBase, Y, X, XEnd: Integer;
+begin
+  if AT > TStatesPerFrame then AT := TStatesPerFrame;
+  if AT <= BorderT then Exit;
+
+  Color := PDWord(@Palette[Machine.BorderColorIndex])^;
+  Slot := (BorderT + BorderPhaseT) * 2;
+  SlotEnd := (AT + BorderPhaseT) * 2;
+  BorderT := AT;
+
+  while Slot < SlotEnd do
+  begin
+    Y := Slot div SlotsPerScanline;
+    RowBase := Y * SlotsPerScanline;
+    X := Slot - RowBase;
+    XEnd := Min(SlotEnd - RowBase, ImageWidth);
+    Slot := RowBase + SlotsPerScanline;   { the blanking tail is skipped with it }
+
+    if not InRange(Y, 0, ImageHeight - 1) then Continue;
+    if X >= XEnd then Continue;
+
+    RowBase := Y * ImageWidth;
+    if not InRange(Y, ScreenTop, ScreenBottom - 1) then
+    begin
+      { Above or below the screen: the row is border edge to edge. }
+      FillDWord(Pixels^[RowBase + X], XEnd - X, Color);
+      Continue;
+    end;
+
+    if X < ScreenLeft then
+      FillDWord(Pixels^[RowBase + X], Min(XEnd, ScreenLeft) - X, Color);
+
+    if XEnd > ScreenRight then
+    begin
+      if X < ScreenRight then X := ScreenRight;
+      FillDWord(Pixels^[RowBase + X], XEnd - X, Color);
+    end;
+  end;
+end;
+
+procedure TApplication.OnBorderChange(AIndex: TZXColorIndex; ACycles: Integer);
+begin
+  { Fired before the machine adopts AIndex, so the colour still on the port is
+    the one the beam has been laying down up to this instant. }
+  PaintBorderUntil(ACycles);
 end;
 
 end.

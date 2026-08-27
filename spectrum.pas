@@ -33,6 +33,8 @@ type
   TAdvanceAudioNotify = procedure(ANewT: Integer) of object;
   TTapeSavedNotify = procedure(const AFilename: String) of object;
 
+  TBorderChangeNotify = procedure(AIndex: TZXColorIndex; ACycles: Integer) of object;
+
   TZXSpectrum48 = class
   private
     FBorderColorIndex: TZXColorIndex;
@@ -110,6 +112,7 @@ type
     Joystick: TJoystick;
     AdvanceAudio: TAdvanceAudioNotify;
     OnTapeSaved: TTapeSavedNotify;
+    BorderChange: TBorderChangeNotify;
     function OnMemoryRead(AAddress: Word): Byte;
     procedure OnMemoryWrite(AAddress: Word; AValue: Byte);
     function OnIORead(AAddress: Word): Byte;
@@ -461,11 +464,17 @@ begin
 end;
 
 procedure TZXSpectrum48.OnIOWrite(AAddress: Word; AValue: Byte); inline;
+var
+  NewIndex: TZXColorIndex;
 begin
   case AAddress.Bytes[0] of
     $FE:
       begin
-        BorderColorIndex := AValue and %111;
+        NewIndex := AValue and %111;
+        if Assigned(BorderChange) and (BorderColorIndex <> NewIndex) then
+          BorderChange(NewIndex, Cycles + CPU.cycles);
+
+        BorderColorIndex := NewIndex;
         { Flush the audio bucket before either pin moves - this same write is
           the only thing that can move them. }
         if Assigned(AdvanceAudio) then AdvanceAudio(Cycles + CPU.cycles);
