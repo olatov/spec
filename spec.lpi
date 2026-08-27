@@ -99,9 +99,6 @@
         <UnitName Value="Spec"/>
       </Unit>
       <Unit>
-        <Filename Value="Tape.pas"/>
-      </Unit>
-      <Unit>
         <Filename Value="spectrum.pas"/>
         <UnitName Value="Spectrum"/>
       </Unit>

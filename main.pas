@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
-  Z80, Spectrum, Tape;
+  Z80, Spectrum;
 
 type
   TApplication = class(TComponent)
@@ -366,12 +366,9 @@ begin
       { Leave the ROM unpatched if the tape fails to load, so a bad
         filename doesn't silently break normal BASIC boot. }
 
-      if LoadTAP(Snapshot) then
-      begin
-        Machine.ROM[LDBytesAddress] := Z80_HOOK;
+      if Machine.LoadTAP(Snapshot) then
         if Config.ReadBool('Tape', 'AutoLoad', True) or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
           AutoLoadFrame := 100; { give the ROM time to finish booting to BASIC first }
-      end;
 
     end else
     begin

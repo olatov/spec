@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, Math, System.IOUtils,
   Raylib,
-  Z80, Tape;
+  Z80;
 
 type
   TZXColorIndex = 0..15;
@@ -43,9 +43,18 @@ type
     FFrames: QWord;
     FINT: Boolean;
     FPower: Boolean;
+    FTapeBlocks: array of TBytes;
+    FTapeCursor: Integer;
+    FTapeLoaded: Boolean;
     procedure SetBorderColorIndex(AValue: TZXColorIndex);
     procedure SetINT(AValue: Boolean);
     procedure SetPower(AValue: Boolean);
+    function GetTapeBlockCount: Integer;
+    { Standard fast-load trap for LD-BYTES ($0556): consumes the next tape
+      block per the routine's entry/exit register contract, then simulates
+      the RET back to SA_LD_RET that the real routine would perform. Runs as
+      an instantaneous trap, not real bus activity. }
+    procedure HandleLoadTrap;
   public
     CPU: TZ80;
     ROM: array[0..$3FFF] of Byte;
@@ -66,6 +75,8 @@ type
     property Cycles: QWord read FCycles;
     property Power: Boolean read FPower write SetPower;
     property INT: Boolean read FINT write SetINT;
+    property TapeCursor: Integer read FTapeCursor;
+    property TapeBlockCount: Integer read GetTapeBlockCount;
     constructor Create;
     procedure Reset;
     procedure Wait(ACycles: Integer);
@@ -76,11 +87,21 @@ type
     procedure LoadZ80(AStream: TStream);
     procedure SaveZ80(AFilename: String);
     procedure SaveZ80(AStream: TStream);
+    { Parses a .TAP file into tape blocks, verbatim (flag byte + data +
+      checksum byte per block, exactly as LD-BYTES expects to stream them),
+      resets the block cursor, and patches the ROM's LD-BYTES entry so the
+      fast-load trap fires. Returns False (leaving the tape empty and the ROM
+      unpatched) if the file can't be read or contains no blocks. }
+    function LoadTAP(const AFilename: String): Boolean;
   end;
 
 {$embedbytes ROMBytes 'rom/48.rom'}
 
 implementation
+
+const
+  { Entry point of the 48K ROM's LD-BYTES routine. }
+  LDBytesAddress = $0556;
 
 function FetchCallback(Context: Pointer; Address: UInt16): UInt8; cdecl;
 begin
@@ -353,7 +374,7 @@ function TZXSpectrum48.OnHook(AAddress: Word): Byte;
 begin
   if AAddress = LDBytesAddress then
   begin
-    HandleLoadTrap(@CPU, @OnMemoryRead, @OnMemoryWrite);
+    HandleLoadTrap;
     { The Z80 core treats the hook's return value as a fresh opcode to
       dispatch immediately UNLESS it's Z80_HOOK (see hook's INSN in
       Z80.c) - returning Z80_HOOK is what tells it "the hook fully
@@ -428,6 +449,9 @@ begin
   FFrames := 0;
   FCycles := 0;
   Move(ROMBytes, ROM, SizeOf(ROMBytes));
+
+  { A fresh ROM image loses the LD-BYTES patch; reapply it if a tape is loaded. }
+  if FTapeLoaded then ROM[LDBytesAddress] := Z80_HOOK;
 end;
 
 procedure TZXSpectrum48.Wait(ACycles: Integer); inline;
@@ -667,6 +691,116 @@ begin
 
     WriteBuffer(RAM, SizeOf(RAM));
   end;
+end;
+
+function TZXSpectrum48.GetTapeBlockCount: Integer;
+begin
+  Result := Length(FTapeBlocks);
+end;
+
+function TZXSpectrum48.LoadTAP(const AFilename: String): Boolean;
+var
+  FS: TFileStream;
+  LenLo, LenHi: Byte;
+  Len: Word;
+  Block: TBytes;
+begin
+  SetLength(FTapeBlocks, 0);
+  FTapeCursor := 0;
+  FTapeLoaded := False;
+  Result := False;
+
+  if not TFile.Exists(AFilename) then Exit;
+
+  FS := autofree TFile.OpenRead(AFilename);
+  while FS.Position < FS.Size do
+  begin
+    if (FS.Read(LenLo, 1) <> 1) or (FS.Read(LenHi, 1) <> 1) then Break;
+    Len := LenLo or (Word(LenHi) shl 8);
+    if Len = 0 then Continue;
+
+    SetLength(Block, Len);
+    if FS.Read(Block[0], Len) <> Len then Break;
+
+    SetLength(FTapeBlocks, Length(FTapeBlocks) + 1);
+    FTapeBlocks[High(FTapeBlocks)] := Block;
+  end;
+
+  Result := Length(FTapeBlocks) > 0;
+  if Result then
+  begin
+    FTapeLoaded := True;
+    ROM[LDBytesAddress] := Z80_HOOK;
+  end;
+end;
+
+procedure TZXSpectrum48.HandleLoadTrap;
+var
+  Block: TBytes;
+  ExpectedFlag, Checksum: Byte;
+  RequestedLen, ActualLen: Word;
+  IsLoad, Ok: Boolean;
+  I: Integer;
+  RetLo, RetHi: Byte;
+begin
+  ExpectedFlag := CPU.af.bytes.high;
+  IsLoad := (CPU.af.bytes.low and Z80_CF) <> 0;
+  RequestedLen := CPU.de.word;
+  Ok := False;
+
+  if FTapeCursor < Length(FTapeBlocks) then
+  begin
+    Block := FTapeBlocks[FTapeCursor];
+    Inc(FTapeCursor);
+  end
+  else
+    SetLength(Block, 0);
+
+  if (Length(Block) >= 2) and (Block[0] = ExpectedFlag) then
+  begin
+    Checksum := 0;
+    for I := 0 to High(Block) do
+      Checksum := Checksum xor Block[I];
+
+    if Checksum = 0 then
+    begin
+      ActualLen := Length(Block) - 2; { minus flag byte and trailing checksum byte }
+      if ActualLen > RequestedLen then ActualLen := RequestedLen;
+
+      if IsLoad then
+      begin
+        for I := 0 to ActualLen - 1 do
+          OnMemoryWrite(CPU.ix_iy[0].word + I, Block[1 + I]);
+      end
+      else
+      begin
+        Ok := True;
+        for I := 0 to ActualLen - 1 do
+          if OnMemoryRead(CPU.ix_iy[0].word + I) <> Block[1 + I] then
+          begin
+            Ok := False;
+            Break;
+          end;
+      end;
+
+      CPU.ix_iy[0].word := CPU.ix_iy[0].word + ActualLen;
+      CPU.de.word := RequestedLen - ActualLen;
+
+      Ok := (ActualLen = RequestedLen) and (IsLoad or Ok);
+    end;
+  end;
+
+  if Ok then
+    CPU.af.bytes.low := CPU.af.bytes.low or Z80_CF
+  else
+    CPU.af.bytes.low := CPU.af.bytes.low and not Z80_CF;
+
+  { The caller (SAVE_ETC / LD_BLOCK) pushed SA_LD_RET before jumping here;
+    simulate LD-BYTES's own RET back to it. }
+  RetLo := OnMemoryRead(CPU.sp.word);
+  RetHi := OnMemoryRead(CPU.sp.word + 1);
+  CPU.sp.word := CPU.sp.word + 2;
+  CPU.pc.word := RetLo or (Word(RetHi) shl 8);
 end;
 
 end.
