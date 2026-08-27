@@ -595,6 +595,8 @@ begin
   FTapeBaseTState := 0;
   FTapePausedT := 0;
   FWavCursor := 0;
+
+  CPU.pc.word := 0;
 end;
 
 procedure TZXSpectrum48.Wait(ACycles: Integer); inline;

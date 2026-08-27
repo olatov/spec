@@ -105,6 +105,10 @@
       <Unit>
         <Filename Value="main.pas"/>
       </Unit>
+      <Unit>
+        <Filename Value="osdmenu.pas"/>
+        <UnitName Value="OSDMenu"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

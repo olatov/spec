@@ -7,14 +7,18 @@ interface
 uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
-  Z80, Spectrum;
+  Z80, Spectrum, OSDMenu;
 
 type
   TApplication = class(TComponent)
   private
     FFullscreen: Boolean;
     Config: TIniFile;
+    FMuted: Boolean;
     procedure AdvanceAudio(NewT: Integer);
+    function BuildMenu: TMenu;
+    function GetPaused: Boolean;
+    procedure SetMuted(AValue: Boolean);
     procedure TapeSaved(const AFilename: String);
     function QuickLoad: Boolean;
     procedure QuickSave;
@@ -27,10 +31,11 @@ type
     Target: TRenderTexture2D;
     KBTexture: TTexture2D;
     ShowKeyboard: Boolean;
+    ShowMenu: Boolean;
     Image: TImage;
     Video: TTexture2D;
+    Menu: TMenu;
     Shaders: array[0..2] of TShader;
-    Paused: Boolean;
     TapeSound: Boolean;   { [Tape] Sound - play tape noise through the speaker }
     TVType: Byte;
     Palette: array[0..15] of TColorB;
@@ -38,6 +43,10 @@ type
     Pixels: PPixels;
     AttrTable: PAttrTable;
     Overscan: Integer;
+    QuitRequested: Boolean;
+    procedure RunFrame;
+    property Muted: Boolean read FMuted write SetMuted;
+    property Paused: Boolean read GetPaused;
     property Fullscreen: Boolean read FFullscreen write SetFullscreen;
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -77,6 +86,8 @@ const
     (it's internal to rcore.c) - these two values are its first two entries. }
   INPUT_KEY_UP = 1;
   INPUT_KEY_DOWN = 2;
+  TVTypeNames: array[0..2] of String = ('Colour', 'BW', 'Modern');
+  JoystickTypeNames: array[jtNone..jtCursor] of String = ('None', 'Kempston', 'Cursor');
 
 var
   { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_AUTOSAVE env
@@ -409,6 +420,7 @@ begin
   SetAudioStreamBufferSizeDefault(AudioChunkFrames);
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
   SetVolume(Config.ReadFloat('Audio', 'Volume', 0.4));
+  Muted := Config.ReadBool('Audio', 'Muted', False);
 end;
 
 procedure TApplication.SetVolume(AVolume: Single; K: Single = 4);
@@ -417,11 +429,152 @@ begin
   SetAudioStreamVolume(AudioStream, (Exp(K * AudioVolume) - 1) / (Exp(K) - 1));
 end;
 
+procedure TApplication.RunFrame;
+var
+  Dest: TRectangle;
+begin
+  HandleInput;
+
+  if not Paused then
+  begin
+    RenderVideoFrame;
+    RenderAudioFrame;
+  end;
+
+  UpdateTexture(Video, Image.data);
+
+  BeginTextureMode(Target);
+    DrawTexturePRO(Video,
+      RectangleCreate(0, 0, Video.width, Video.height),
+      RectangleCreate(0, 0, Target.texture.width, Target.texture.height),
+      Vector2Zero, 0, WHITE);
+  EndTextureMode;
+
+  BeginDrawing;
+    ClearBackground(BLACK);
+    BeginShaderMode(Shaders[TVType]);
+
+    Dest := if (GetScreenWidth / GetScreenHeight) >= 1.333
+      then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0,
+        GetScreenHeight * 1.333, GetScreenHeight)
+      else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375
+        ), GetScreenWidth, GetScreenWidth * 0.75);
+
+    DrawTexturePro(
+      Target.Texture,
+      RectangleCreate(Overscan, Overscan, Target.texture.width - (2 * Overscan
+        ), - Target.texture.height + (2 * Overscan)),
+      Dest,
+      Vector2Zero, 0, WHITE);
+    EndShaderMode;
+
+    if Assigned(Menu) then
+    begin
+      Menu.Render;
+      DrawTexturePro(
+        Menu.Texture,
+        RectangleCreate(0, 0, Menu.Texture.width, -Menu.Texture.height),
+        Dest,
+        Vector2Zero, 0, ColorAlpha(WHITE, 0.975));
+    end else
+    if ShowKeyboard then
+    begin
+      Dest.height := KBTexture.height * Dest.width / KBTexture.width;
+      DrawTexturePro(KBTexture,
+        RectangleCreate(0, 0, KBTexture.width, KBTexture.height), Dest,
+          Vector2Zero, 0, WHITE);
+      DrawRectangleLinesEx(Dest, 1, RAYWHITE);
+    end;
+
+    if not OSD.Text.IsEmpty then
+      if GetTime < OSD.Lifetime then
+        DrawText(PAnsiChar(OSD.Text), Trunc(Dest.x) + 20, Trunc(Dest.y),
+          GetScreenHeight div 12, ORANGE)
+      else
+        OSD.Text := '';
+  EndDrawing;
+end;
+
+function TApplication.BuildMenu: TMenu;
+begin
+  Result := TMenu.Create(Self);
+
+  Result.Root.AddItem('Quick load', '',
+    procedure(Sender: TMenuItem)
+    begin
+      QuickLoad;
+      Sender.Menu.Close;
+    end);
+
+  Result.Root.AddItem('Quick save', '',
+    procedure(Sender: TMenuItem)
+    begin
+      QuickSave;
+      Sender.Menu.Close;
+    end);
+
+  Result.Root.AddItem('TV-set', TVTypeNames[TVType],
+    procedure(Sender: TMenuItem)
+    begin
+      TVType := (TVType + 1) mod 3;
+      Sender.Value := TVTypeNames[TVType];
+    end);
+
+  Result.Root.AddItem('Joystick', JoystickTypeNames[Machine.Joystick.Type_],
+    procedure(Sender: TMenuItem)
+    begin
+      Machine.Joystick.Type_ := if Machine.Joystick.Type_ <> High(TJoystickType)
+        then Succ(Machine.Joystick.Type_) else Low(TJoystickType);
+      Sender.Value := JoystickTypeNames[Machine.Joystick.Type_];
+    end);
+
+  Result.Root.AddItem('Fullscreen', BoolToStr(Fullscreen, 'yes', 'no'),
+    procedure(Sender: TMenuItem)
+    begin
+      Fullscreen := not Fullscreen;
+      Sender.Value := BoolToStr(Fullscreen, 'yes', 'no');
+    end);
+
+  Result.Root.AddItem('Sound', BoolToStr(not Muted, 'yes', 'no'),
+    procedure(Sender: TMenuItem)
+    begin
+      Muted := not Muted;
+      Sender.Value := BoolToStr(not Muted, 'yes', 'no');
+    end);
+
+  Result.Root.AddItem('Reset', '',
+    procedure(Sender: TMenuItem)
+    begin
+      Machine.Reset;
+      Sender.Menu.Close;
+    end);
+
+  Result.Root.AddItem('Quit', '',
+    procedure(Sender: TMenuItem)
+    begin
+      QuitRequested := True;
+    end);
+end;
+
+function TApplication.GetPaused: Boolean;
+begin
+  Result := Assigned(Menu);
+end;
+
+procedure TApplication.SetMuted(AValue: Boolean);
+begin
+  if FMuted = AValue then Exit;
+  FMuted := AValue;
+
+  if Muted and IsAudioStreamPlaying(AudioStream) then
+    StopAudioStream(AudioStream)
+  else if IsAudioStreamValid(AudioStream) then
+    PlayAudioStream(AudioStream);
+end;
+
 procedure TApplication.Run;
 var
   I: Integer;
-  Paused: Boolean = False;
-  Dest: TRectangle;
 begin
   Machine.Power := True;
 
@@ -455,73 +608,43 @@ begin
     end;
   end;
 
-  PlayAudioStream(AudioStream);
-
   FillByte(AccumBuf, SizeOf(AccumBuf), 0); { 0 = silence for signed 16-bit PCM }
 
-  for I := 1 to 3 do
-    if IsAudioStreamProcessed(AudioStream) then
-      UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
-
-  while not WindowShouldClose do
+  if not Muted then
   begin
-    HandleInput;
+    PlayAudioStream(AudioStream);
 
-    if not Paused then
-    begin
-      RenderVideoFrame;
-      RenderAudioFrame;
-    end;
-
-    UpdateTexture(Video, Image.data);
-
-
-    BeginTextureMode(Target);
-      DrawTexturePRO(Video,
-        RectangleCreate(0, 0, Video.width, Video.height),
-        RectangleCreate(0, 0, Target.texture.width, Target.texture.height),
-        Vector2Zero, 0, WHITE);
-    EndTextureMode;
-
-    BeginDrawing;
-      ClearBackground(BLACK);
-      BeginShaderMode(Shaders[TVType]);
-
-      Dest := if (GetScreenWidth / GetScreenHeight) >= 1.333
-        then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0, GetScreenHeight * 1.333, GetScreenHeight)
-        else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375), GetScreenWidth, GetScreenWidth * 0.75);
-
-      DrawTexturePro(
-        Target.Texture,
-        RectangleCreate(Overscan, Overscan, Target.texture.width - (2 * Overscan), -Target.texture.height + (2 * Overscan)),
-        Dest,
-        Vector2Zero, 0, WHITE);
-      EndShaderMode;
-
-      if ShowKeyboard then
-      begin
-        Dest.height := KBTexture.height * Dest.width / KBTexture.width;
-        DrawTexturePro(KBTexture,
-          RectangleCreate(0, 0, KBTexture.width, KBTexture.height), Dest, Vector2Zero, 0, WHITE);
-        DrawRectangleLinesEx(Dest, 1, RAYWHITE);
-      end;
-
-      if not OSD.Text.IsEmpty then
-        if GetTime < OSD.Lifetime then
-          DrawText(PAnsiChar(OSD.Text), Trunc(Dest.x) + 20, Trunc(Dest.y), GetScreenHeight div 12, ORANGE)
-        else
-          OSD.Text := '';
-    EndDrawing;
+    for I := 1 to 3 do
+      if IsAudioStreamProcessed(AudioStream) then
+        UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
   end;
+
+  SetExitKey(KEY_NULL);
+
+  while not (WindowShouldClose or QuitRequested) do RunFrame;
 
   StopAudioStream(AudioStream);
 end;
 
 procedure TApplication.HandleInput;
 var
-  S: String;
   Buffer: TImage;
 begin
+  if Assigned(Menu) then
+  begin
+    Menu.HandleInput;
+    Exit;
+  end;
+
+  if IsKeyPressed(KEY_ESCAPE) then
+  begin
+    Menu := BuildMenu;
+    Menu.OnClose := procedure(Sender: TMenu)
+      begin
+        FreeAndNil(Menu);
+      end;
+  end;
+
   if IsKeyPressed(KEY_F1) then
   begin
     ShowKeyboard := not ShowKeyboard;
@@ -559,14 +682,7 @@ begin
   if IsKeyPressed(KEY_F9) then
   begin
     TVType := (TVType + 1) mod Length(Shaders);
-
-    case TVType of
-      TVTypeColor: S := 'Colour';
-      TVTypeBW: S := 'BW';
-      TVTypeModern: S := 'Modern';
-    end;
-
-    SetOSD($'TV type: {S}');
+    SetOSD($'TV type: {TVTypeNames[TVType]}');
   end;
 
   if IsKeyPressed(KEY_F6) then
@@ -575,19 +691,12 @@ begin
       then Succ(Machine.Joystick.Type_)
       else Low(TJoystickType);
 
-    case Machine.Joystick.Type_ of
-      jtNone: S := 'Off';
-      jtKempston: S := 'Kempston';
-      jtCursor: S := 'Cursor';
-    end;
-
-    SetOSD($'Joystick: {S}');
+    SetOSD($'Joystick: {JoystickTypeNames[Machine.Joystick.Type_]}');
   end;
 
-  if IsKeyPressed(KEY_F10) then Paused := not Paused;
   if IsKeyPressed(KEY_F11) then Fullscreen := not Fullscreen;
 
-  if IsKeyPressed(KEY_F12) and Machine.WavLoaded then
+  if IsKeyPressed(KEY_F10) and Machine.WavLoaded then
   begin
     if Machine.TapePlaying then
     begin
@@ -707,6 +816,7 @@ begin
   Config.WriteInteger('Widnow', 'Overscan', Overscan);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
+  Config.WriteBool('Audio', 'Muted', Muted);
   Config.WriteBool('Tape', 'Sound', TapeSound);
   Config.WriteBool('Tape', 'Save', Machine.SaveToWav);
 end;
