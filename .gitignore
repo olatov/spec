@@ -14,3 +14,4 @@ lib/
 *.TAP
 /spec
 Z80/
+Z80.pas

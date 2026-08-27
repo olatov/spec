@@ -99,15 +99,6 @@
         <UnitName Value="Spec"/>
       </Unit>
       <Unit>
-        <Filename Value="shader_color.fs"/>
-      </Unit>
-      <Unit>
-        <Filename Value="shader_bw.fs"/>
-      </Unit>
-      <Unit>
-        <Filename Value="shader_modern.fs"/>
-      </Unit>
-      <Unit>
         <Filename Value="Tape.pas"/>
       </Unit>
       <Unit>
@@ -116,7 +107,6 @@
       </Unit>
       <Unit>
         <Filename Value="main.pas"/>
-        <UnitName Value="un"/>
       </Unit>
     </Units>
   </ProjectOptions>

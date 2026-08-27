@@ -78,7 +78,7 @@ type
     procedure SaveZ80(AStream: TStream);
   end;
 
-{$embedbytes ROMBytes '48.rom'}
+{$embedbytes ROMBytes 'rom/48.rom'}
 
 implementation
 

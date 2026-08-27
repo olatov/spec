@@ -35,6 +35,7 @@ type
     AttrColors: array[0..1] of TAttrTable;
     Pixels: PPixels;
     AttrTable: PAttrTable;
+    Overscan: Integer;
     property Fullscreen: Boolean read FFullscreen write SetFullscreen;
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -91,10 +92,10 @@ var
   BucketHigh: Integer = 0;   { T-states spent HIGH within the current bucket so far }
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
-  {$embedstr ShaderTextColor 'shader_color.fs'}
-  {$embedstr ShaderTextBW 'shader_bw.fs'}
-  {$embedstr ShaderTextModern 'shader_modern.fs'}
-  {$embedbytes KBLayout 'keyboard.png'}
+  {$embedstr ShaderTextColor 'shaders/shader_color.fs'}
+  {$embedstr ShaderTextBW 'shaders/shader_bw.fs'}
+  {$embedstr ShaderTextModern 'shaders/shader_modern.fs'}
+  {$embedbytes KBLayout 'images/keyboard.png'}
 
 implementation
 
@@ -314,6 +315,7 @@ begin
   Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
 
   TVType := Config.ReadInteger('Window', 'TVType', TVTypeColor) mod Length(Shaders);
+  Overscan := Config.ReadInteger('Window', 'Overscan', 16);
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
@@ -367,7 +369,7 @@ begin
       if LoadTAP(Snapshot) then
       begin
         Machine.ROM[LDBytesAddress] := Z80_HOOK;
-        if not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
+        if Config.ReadBool('Tape', 'AutoLoad', True) or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
           AutoLoadFrame := 100; { give the ROM time to finish booting to BASIC first }
       end;
 
@@ -415,7 +417,7 @@ begin
 
       DrawTexturePro(
         Target.Texture,
-        RectangleCreate(16, 16, Target.texture.width - 32, -Target.texture.height + 32),
+        RectangleCreate(Overscan, Overscan, Target.texture.width - (2 * Overscan), -Target.texture.height + (2 * Overscan)),
         Dest,
         Vector2Zero, 0, WHITE);
       EndShaderMode;
@@ -466,6 +468,9 @@ begin
 
   if IsKeyPressed(KEY_F3) and QuickLoad then
     SetOSD('Loaded');
+
+  if IsKeyPressed(KEY_F4) or IsKeyPressedRepeat(KEY_F4) then Dec(Overscan);
+  if IsKeyPressed(KEY_F5) or IsKeyPressedRepeat(KEY_F5) then Inc(Overscan);
 
   if IsKeyPressed(KEY_F7) or IsKeyPressed(KEY_F8) then
   begin
@@ -605,6 +610,7 @@ begin
   end;
 
   Config.WriteInteger('Window', 'TVType', TVType);
+  Config.WriteInteger('Widnow', 'Overscan', Overscan);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
 end;
