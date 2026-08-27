@@ -58,6 +58,7 @@ type
     FWavLoaded: Boolean;
     FTapePlaying: Boolean;
     FTapeArmed: Boolean;         { auto-play on the next EAR read (set on LD-BYTES entry) }
+    FTapeLoading: Boolean;       { inside LD-BYTES - never auto-pause here }
     FTapeBaseTState: QWord;      { machine T-state that maps to tape position 0 }
     FFrameBaseTState: QWord;     { FTotalTStates at the current frame's start, so the
                                    frame-relative T-states the audio mixer works in can
@@ -171,6 +172,9 @@ const
   { Entry points of the 48K ROM's tape routines. }
   LDBytesAddress = $0556;
   SABytesAddress = $04C2;
+  { SA/LD-RET - the return address LD-BYTES and SA-BYTES push for themselves,
+    so reaching it means the tape operation is over. }
+  SALDRetAddress = $053F;
 
   { Sample rate of the .WAV files SAVE produces. }
   WavSampleRate = 44100;
@@ -178,9 +182,12 @@ const
   { 48K Spectrum CPU clock - the timebase the tape edge list is expressed in. }
   CPUClockHz = 3500000;
 
-  { Auto-pause the WAV tape after this many frames without an EAR poll, so
-    it holds position through inter-block gaps and menu screens instead of
-    running past the next block's pilot tone. }
+  { Auto-pause the WAV tape after this many frames without an EAR poll, so it
+    holds position through inter-block gaps and menu screens instead of running
+    past the next block's pilot tone. Only consulted between blocks: LD-BYTES's
+    own LD-WAIT settle ($0571) spins for 1.00s - 50.2 frames - touching no I/O,
+    which would otherwise trip any threshold near a second and strand the deck
+    mid-pilot. FTapeLoading suppresses the timeout for exactly that window. }
   TapeSilenceFrames = 50;
 
   { A SAVE is finished once MIC has been quiet this long. Must exceed the
@@ -494,6 +501,7 @@ begin
 
         Read from ROMBytes, not ROM[] - the latter holds the hook byte. }
       FTapeArmed := True;
+      FTapeLoading := True;
       Exit(ROMBytes[LDBytesAddress]);
     end;
 
@@ -506,6 +514,13 @@ begin
       HandleLoadTrap's RET simulation set it, instead of also executing
       one stray extra instruction there first. }
     Result := Z80_HOOK;
+  end
+  else if AAddress = SALDRetAddress then
+  begin
+    { LD-BYTES / SA-BYTES have returned, so the idle timeout may pause the
+      deck again. Its displaced opcode is PUSH AF. }
+    FTapeLoading := False;
+    Result := ROMBytes[SALDRetAddress];
   end
   else if AAddress = SABytesAddress then
   begin
@@ -587,11 +602,13 @@ begin
   { A fresh ROM image loses the tape patches; reapply them. The SA-BYTES
     tripwire is unconditional - it costs nothing when nothing is saving. }
   if FTapeLoaded or FWavLoaded then ROM[LDBytesAddress] := Z80_HOOK;
+  if FWavLoaded then ROM[SALDRetAddress] := Z80_HOOK;
   ROM[SABytesAddress] := Z80_HOOK;
 
   { The tape clock is tied to FTotalTStates, which just restarted. }
   FTapePlaying := False;
   FTapeArmed := False;
+  FTapeLoading := False;
   FTapeBaseTState := 0;
   FTapePausedT := 0;
   FWavCursor := 0;
@@ -613,6 +630,10 @@ begin
   FOvershoot := Fact - Requested;
   Inc(FCycles, Fact);
   Inc(FTotalTStates, Fact);
+  { z80_run leaves its own count in CPU.cycles, which FTotalTStates has now
+    absorbed. Clear it so CurrentTStates stays right outside a callback too -
+    z80_run zeroes it on entry, so this costs the CPU core nothing. }
+  CPU.cycles := 0;
 end;
 
 procedure TZXSpectrum48.RunScanline; inline;
@@ -660,8 +681,9 @@ begin
   FCurrentScanline := 0;
   FFlashPhase := Odd(Frames div 16);
 
-  if FTapePlaying and (FFrames - FTapeLastEarFrame > TapeSilenceFrames) then
-    TapePause;
+  if FTapePlaying and not FTapeLoading
+    and (FFrames - FTapeLastEarFrame > TapeSilenceFrames) then
+      TapePause;
 
   if FSaveRecording and (FFrames - FSaveLastEdgeFrame > SaveSilenceFrames) then
     FinishSave;
@@ -885,10 +907,13 @@ begin
     FTapeLoaded := True;
     ROM[LDBytesAddress] := Z80_HOOK;
 
-    { A .TAP replaces any WAV tape - the two loaders are mutually exclusive. }
+    { A .TAP replaces any WAV tape - the two loaders are mutually exclusive.
+      The SA/LD-RET tripwire is WAV-only, so hand that byte back. }
     FWavLoaded := False;
     FTapePlaying := False;
     FTapeArmed := False;
+    FTapeLoading := False;
+    ROM[SALDRetAddress] := ROMBytes[SALDRetAddress];
     SetLength(FWavEdges, 0);
   end;
 end;
@@ -1418,6 +1443,7 @@ begin
   begin
     FWavLoaded := True;
     ROM[LDBytesAddress] := Z80_HOOK;
+    ROM[SALDRetAddress] := Z80_HOOK;
 
     { A WAV replaces any .TAP fast-load tape. }
     FTapeLoaded := False;
