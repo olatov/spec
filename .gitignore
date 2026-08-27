@@ -12,6 +12,7 @@ lib/
 *.tap
 *.tzx
 *.TAP
+*.wav
 /spec
 Z80/
 Z80.pas
