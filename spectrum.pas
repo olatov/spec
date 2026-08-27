@@ -59,6 +59,9 @@ type
     FTapePlaying: Boolean;
     FTapeArmed: Boolean;         { auto-play on the next EAR read (set on LD-BYTES entry) }
     FTapeBaseTState: QWord;      { machine T-state that maps to tape position 0 }
+    FFrameBaseTState: QWord;     { FTotalTStates at the current frame's start, so the
+                                   frame-relative T-states the audio mixer works in can
+                                   be resolved against the tape clock }
     FTapePausedT: QWord;         { tape-relative T-state to resume playback from }
     FTapeLastEarFrame: QWord;    { frame number of the most recent EAR poll }
     procedure SetBorderColorIndex(AValue: TZXColorIndex);
@@ -75,6 +78,7 @@ type
       Tick). }
     function CurrentTStates: QWord;
     function WavLengthTStates: QWord;
+    function FindWavEdge(ATapeT: QWord): Integer;
     procedure SeekWavCursor(ATapeT: QWord);
     { Current tape signal level; also drives auto start/stop. Call once per
       genuine ULA read of port $FE. }
@@ -128,6 +132,9 @@ type
     procedure TapePlay;
     procedure TapePause;
     procedure TapeStop;   { pause and rewind to the start }
+    { HIGH duty cycle of the tape signal over a span of the current frame, for
+      mixing the loading noise into the speaker. }
+    function TapeHighTStates(AFromT, AToT: Integer): Integer;
     function TapePositionSeconds: Double;
     function TapeLengthSeconds: Double;
   end;
@@ -592,6 +599,7 @@ end;
 procedure TZXSpectrum48.BeginFrame;
 begin
   FCycles := 0;
+  FFrameBaseTState := FTotalTStates;
   Inc(FFrames);
   FCurrentScanline := 0;
   FFlashPhase := Odd(Frames div 16);
@@ -908,11 +916,11 @@ begin
     Result := FWavEdges[High(FWavEdges)];
 end;
 
-procedure TZXSpectrum48.SeekWavCursor(ATapeT: QWord);
+{ Index of the first edge strictly after ATapeT. }
+function TZXSpectrum48.FindWavEdge(ATapeT: QWord): Integer;
 var
   Lo, Hi, Mid: Integer;
 begin
-  { Leave FWavCursor at the first edge strictly after ATapeT. }
   Lo := 0;
   Hi := Length(FWavEdges);
   while Lo < Hi do
@@ -920,7 +928,52 @@ begin
     Mid := (Lo + Hi) div 2;
     if FWavEdges[Mid] <= ATapeT then Lo := Mid + 1 else Hi := Mid;
   end;
-  FWavCursor := Lo;
+  Result := Lo;
+end;
+
+procedure TZXSpectrum48.SeekWavCursor(ATapeT: QWord);
+begin
+  FWavCursor := FindWavEdge(ATapeT);
+end;
+
+{ T-states the tape signal spent HIGH within [AFromT, AToT) of the current frame -
+  i.e. the span's HIGH duty cycle, in the same currency the beeper mixer uses, so
+  tape noise passes through the same boxcar low-pass instead of being point-sampled
+  (which would alias the 2-3 kHz pulse train into whistles). Returns 0 unless a WAV
+  tape is actually playing, and uses its own edge index so the CPU-facing FWavCursor
+  is left alone. }
+function TZXSpectrum48.TapeHighTStates(AFromT, AToT: Integer): Integer;
+var
+  A, B, SegStart: QWord;
+  Idx: Integer;
+  Level: Boolean;
+begin
+  Result := 0;
+  if not FTapePlaying or (AToT <= AFromT) then Exit;
+
+  A := FFrameBaseTState + QWord(AFromT);
+  B := FFrameBaseTState + QWord(AToT);
+
+  { Anything before playback began is silence, not signal. }
+  if A < FTapeBaseTState then A := FTapeBaseTState;
+  if B <= A then Exit;
+
+  Dec(A, FTapeBaseTState);
+  Dec(B, FTapeBaseTState);
+
+  Idx := FindWavEdge(A);
+  Level := FWavStartLevel xor Odd(Idx);
+  SegStart := A;
+
+  while (Idx < Length(FWavEdges)) and (FWavEdges[Idx] < B) do
+  begin
+    if Level then Inc(Result, Integer(FWavEdges[Idx] - SegStart));
+    SegStart := FWavEdges[Idx];
+    Level := not Level;
+    Inc(Idx);
+  end;
+
+  if Level then Inc(Result, Integer(B - SegStart));
 end;
 
 function TZXSpectrum48.TapeEar: Boolean;

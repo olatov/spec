@@ -30,6 +30,7 @@ type
     Video: TTexture2D;
     Shaders: array[0..2] of TShader;
     Paused: Boolean;
+    TapeSound: Boolean;   { [Tape] Sound - play tape noise through the speaker }
     TVType: Byte;
     Palette: array[0..15] of TColorB;
     AttrColors: array[0..1] of TAttrTable;
@@ -66,6 +67,11 @@ const
   AudioHigh: CInt16 = CInt16.MaxValue;
   AudioLow: CInt16 = CInt16.MinValue;
 
+  { Share of the mixed output given to the tape while it plays (see TapeSound).
+    Loud enough to hear the blocks go by without drowning a loader's own beeper
+    effects. }
+  TapeMixPercent = 45;
+
   { raylib's AutomationEventType enum isn't exposed in raylib.h/raylib.pas
     (it's internal to rcore.c) - these two values are its first two entries. }
   INPUT_KEY_UP = 1;
@@ -90,6 +96,7 @@ var
   PrevT: Integer = 0;        { T-state at which that accumulation last left off }
   BucketStartT: Integer = 0; { T-state at which the current bucket began }
   BucketHigh: Integer = 0;   { T-states spent HIGH within the current bucket so far }
+  BucketTapeHigh: Integer = 0; { same, for the tape signal (see TapeSound) }
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
   {$embedstr ShaderTextColor 'shaders/shader_color.fs'}
@@ -141,7 +148,13 @@ end;
   held constant since the last call. Rather than snapshotting one instant per output sample
   (which aliases high-pitched beeper toggling - e.g. Wham!'s PWM-style tricks - into audible
   spurious tones), each finished bucket is written as the pin's HIGH duty cycle over its
-  exact T-state span: a boxcar low-pass filter matched to the sample rate. }
+  exact T-state span: a boxcar low-pass filter matched to the sample rate.
+
+  When TapeSound is on and a WAV tape is running, the tape signal's duty cycle over the
+  same span is blended in - the real machine's amplifier hears both, which is why loading
+  screeches. Mixing by weight (rather than summing) keeps the result inside the bucket
+  duration, so the sample can never clip; with the tape stopped the beeper keeps the full
+  weight and the output is bit-identical to before. }
 
 procedure TApplication.AdvanceAudio(NewT: Integer);
   function BucketBoundary(Index: Integer): Integer; inline;
@@ -150,24 +163,35 @@ procedure TApplication.AdvanceAudio(NewT: Integer);
   end;
 
 var
-  NextBoundary, Duration: Integer;
+  NextBoundary, Duration, High: Integer;
+  Mixing: Boolean;
 begin
+  Mixing := TapeSound and Machine.TapePlaying;
+
   while PrevTiming < SamplesPerFrame do
   begin
     NextBoundary := BucketBoundary(PrevTiming + 1);
     if NextBoundary > NewT then Break;
 
     if Machine.AudioPin then Inc(BucketHigh, NextBoundary - PrevT);
+    if Mixing then Inc(BucketTapeHigh, Machine.TapeHighTStates(PrevT, NextBoundary));
+
+    High := if Mixing
+      then (BucketHigh * (100 - TapeMixPercent) + BucketTapeHigh * TapeMixPercent) div 100
+      else BucketHigh;
+
     Duration := NextBoundary - BucketStartT;
-    AudioBuffer[PrevTiming] := CInt16(AudioLow + (BucketHigh * (Integer(AudioHigh) - AudioLow)) div Duration);
+    AudioBuffer[PrevTiming] := CInt16(AudioLow + (High * (Integer(AudioHigh) - AudioLow)) div Duration);
 
     PrevT := NextBoundary;
     BucketStartT := NextBoundary;
     BucketHigh := 0;
+    BucketTapeHigh := 0;
     Inc(PrevTiming);
   end;
 
   if Machine.AudioPin then Inc(BucketHigh, NewT - PrevT);
+  if Mixing then Inc(BucketTapeHigh, Machine.TapeHighTStates(PrevT, NewT));
   PrevT := NewT;
 end;
 
@@ -316,6 +340,7 @@ begin
 
   TVType := Config.ReadInteger('Window', 'TVType', TVTypeColor) mod Length(Shaders);
   Overscan := Config.ReadInteger('Window', 'Overscan', 16);
+  TapeSound := Config.ReadBool('Tape', 'Sound', True);
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
@@ -608,6 +633,7 @@ begin
   PrevT := 0;
   BucketStartT := 0;
   BucketHigh := 0;
+  BucketTapeHigh := 0;
 
   Move(AudioBuffer, AccumBuf[AccumPos], SamplesPerFrame * SizeOf(CInt16));
   Inc(AccumPos, SamplesPerFrame);
@@ -632,6 +658,7 @@ begin
   Config.WriteInteger('Widnow', 'Overscan', Overscan);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
+  Config.WriteBool('Tape', 'Sound', TapeSound);
 end;
 
 end.
