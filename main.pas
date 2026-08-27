@@ -24,6 +24,8 @@ type
     AudioStream: TAudioStream;
     AudioVolume: Single;
     Target: TRenderTexture2D;
+    KBTexture: TTexture2D;
+    ShowKeyboard: Boolean;
     Image: TImage;
     Video: TTexture2D;
     Shaders: array[0..2] of TShader;
@@ -92,6 +94,7 @@ var
   {$embedstr ShaderTextColor 'shader_color.fs'}
   {$embedstr ShaderTextBW 'shader_bw.fs'}
   {$embedstr ShaderTextModern 'shader_modern.fs'}
+  {$embedbytes KBLayout 'keyboard.png'}
 
 implementation
 
@@ -233,6 +236,8 @@ begin
   UnloadTexture(Video);
   UnloadImage(Image);
 
+  if IsTextureValid(KBTexture) then UnloadTexture(KBTexture);
+
   CloseWindow;
 
   FreeAndNil(Machine);
@@ -328,7 +333,6 @@ begin
   Image := GenImageColor(ImageWidth, ImageHeight, BLACK);
   Pixels := Image.data;
   Video := LoadTextureFromImage(Image);
-  SetTextureFilter(Video, TEXTURE_FILTER_BILINEAR);
 
   InitAudioDevice;
 
@@ -347,6 +351,7 @@ procedure TApplication.Run;
 var
   I: Integer;
   Paused: Boolean = False;
+  Dest: TRectangle;
 begin
   Machine.Power := True;
 
@@ -417,6 +422,14 @@ begin
           else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375), GetScreenWidth, GetScreenWidth * 0.75),
         Vector2Zero, 0, WHITE);
       EndShaderMode;
+
+      if ShowKeyboard then
+      begin
+        Dest := RectangleCreate(0, 0, GetScreenWidth, KBTexture.height * GetScreenWidth / KBTexture.width);
+        DrawTexturePro(KBTexture,
+          RectangleCreate(0, 0, KBTexture.width, KBTexture.height), Dest, Vector2Zero, 0, WHITE);
+        DrawRectangleLinesEx(Dest, 2, RAYWHITE);
+      end;
     EndDrawing;
   end;
 
@@ -426,7 +439,22 @@ end;
 procedure TApplication.HandleInput;
 var
   S: String;
+  Buffer: TImage;
 begin
+  if IsKeyPressed(KEY_F1) then
+  begin
+    ShowKeyboard := not ShowKeyboard;
+    if ShowKeyboard then
+    begin
+      Buffer := LoadImageFromMemory('.png', KBLayout, SizeOf(KBLayout));
+      KBTexture := LoadTextureFromImage(Buffer);
+      SetTextureFilter(KBTexture, TEXTURE_FILTER_BILINEAR);
+      UnloadImage(Buffer);
+    end
+    else
+      UnloadTexture(KBTexture);
+  end;
+
   if IsKeyPressed(KEY_F2) then
   begin
     QuickSave;
