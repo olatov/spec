@@ -26,9 +26,9 @@ type
     Target: TRenderTexture2D;
     Image: TImage;
     Video: TTexture2D;
-    Shader: TShader;
+    Shaders: array[0..2] of TShader;
     Paused: Boolean;
-    TVMode: Byte;
+    TVType: Byte;
     Palette: array[0..15] of TColorB;
     AttrColors: array[0..1] of TAttrTable;
     Pixels: PPixels;
@@ -42,10 +42,13 @@ type
     procedure RenderVideoFrame;
     procedure RenderAudioFrame;
     procedure SaveConfig;
-    procedure SetTVMode(AMode: Integer);
   end;
 
 const
+  TVTypeColor = 0;
+  TVTypeBW = 1;
+  TVTypeModern = 2;
+
   ImageWidth = 352;
   ImageHeight = 288;
   ScanlineTStates = 224;
@@ -86,7 +89,9 @@ var
   BucketHigh: Integer = 0;   { T-states spent HIGH within the current bucket so far }
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
-  {$embedstr ShaderText 'shader.fs'}
+  {$embedstr ShaderTextColor 'shader_color.fs'}
+  {$embedstr ShaderTextBW 'shader_bw.fs'}
+  {$embedstr ShaderTextModern 'shader_modern.fs'}
 
 implementation
 
@@ -211,6 +216,8 @@ begin
 end;
 
 destructor TApplication.Destroy;
+var
+  I: Integer;
 begin
   inherited Destroy;
 
@@ -220,7 +227,8 @@ begin
   UnloadAudioStream(AudioStream);
   CloseAudioDevice;
 
-  UnloadShader(Shader);
+  for I := 0 to High(Shaders) do
+    UnloadShader(Shaders[I]);
   UnloadRenderTexture(Target);
   UnloadTexture(Video);
   UnloadImage(Image);
@@ -253,8 +261,9 @@ procedure TApplication.Initialize;
   end;
 
 var
-  LinesLoc: Integer;
+  I: Integer;
   LinesCount: Single = 256;
+  Curvature: Single = 7.0;
 begin
   SetTraceLogLevel(LOG_ERROR);
 
@@ -289,8 +298,8 @@ begin
     SetConfigFlags(FLAG_WINDOW_HIGHDPI);
 
   InitWindow(
-    Config.ReadInteger('Window', 'Width', 720),
-    Config.ReadInteger('Window', 'Height', 576),
+    Config.ReadInteger('Window', 'Width', 800),
+    Config.ReadInteger('Window', 'Height', 600),
     'Spec');
 
   SetTargetFPS(FPS);
@@ -299,22 +308,27 @@ begin
 
   Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
 
-  TVMode := Config.ReadInteger('Window', 'TVMode', 7);
+  TVType := Config.ReadInteger('Window', 'TVType', TVTypeColor) mod Length(Shaders);
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
-  SetTextureWrap(Target.texture, TEXTURE_WRAP_CLAMP);
 
-  Shader := LoadShaderFromMemory(Nil, @ShaderText[1]);
+  Shaders[TVTypeColor] := LoadShaderFromMemory(Nil, @ShaderTextColor[1]);
+  Shaders[TVTypeBW] := LoadShaderFromMemory(Nil, @ShaderTextBW[1]);
+  Shaders[TVTypeModern] := LoadShaderFromMemory(Nil, @ShaderTextModern[1]);
 
-  LinesLoc := GetShaderLocation(Shader, 'lines');
-  SetShaderValue(Shader, LinesLoc, @LinesCount, SHADER_UNIFORM_FLOAT);
-
-  SetTVMode(TVMode);
+  for I := 0 to High(Shaders) do
+  begin
+    SetShaderValue(Shaders[I],
+      GetShaderLocation(Shaders[I], 'lines'), @LinesCount, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(Shaders[I],
+      GetShaderLocation(Shaders[I], 'curvature'), @Curvature, SHADER_UNIFORM_FLOAT);
+  end;
 
   Image := GenImageColor(ImageWidth, ImageHeight, BLACK);
   Pixels := Image.data;
   Video := LoadTextureFromImage(Image);
+  SetTextureFilter(Video, TEXTURE_FILTER_BILINEAR);
 
   InitAudioDevice;
 
@@ -380,17 +394,21 @@ begin
     UpdateTexture(Video, Image.data);
 
     BeginTextureMode(Target);
-      DrawTexture(Video, 0, 0, WHITE);
+      DrawTexturePRO(Video,
+        RectangleCreate(0, 0, Video.width, Video.height),
+        RectangleCreate(0, 0, Target.texture.width, Target.texture.height),
+        Vector2Zero, 0, WHITE);
+
       if not OSD.Text.IsEmpty then
         if GetTime < OSD.Lifetime then
-          DrawText(PAnsiChar(OSD.Text), 18, 18, 16, ORANGE)
+          DrawText(PAnsiChar(OSD.Text), 20, 20, 16, ORANGE)
         else
           OSD.Text := '';
     EndTextureMode;
 
     BeginDrawing;
       ClearBackground(BLACK);
-      BeginShaderMode(Shader);
+      BeginShaderMode(Shaders[TVType]);
       DrawTexturePro(
         Target.Texture,
         RectangleCreate(16, 16, Target.texture.width - 32, -Target.texture.height + 32),
@@ -428,9 +446,15 @@ begin
 
   if IsKeyPressed(KEY_F9) then
   begin
-    TVMode := (TVMode + 1) and $0F;
-    SetTVMode(TVMode);
-    SetOSD($'TV mode: {TVMode}');
+    TVType := (TVType + 1) mod Length(Shaders);
+
+    case TVType of
+      TVTypeColor: S := 'Colour';
+      TVTypeBW: S := 'BW';
+      TVTypeModern: S := 'Modern';
+    end;
+
+    SetOSD($'TV type: {S}');
   end;
 
   if IsKeyPressed(KEY_F6) then
@@ -450,36 +474,6 @@ begin
 
   if IsKeyPressed(KEY_F10) then Paused := not Paused;
   if IsKeyPressed(KEY_F11) then Fullscreen := not Fullscreen;
-end;
-
-procedure TApplication.SetTVMode(AMode: Integer);
-var
-  Value: CInt32;
-  Curvature: Single = 7.0;
-begin
-  Value := IfThen(AMode.Bits[0], 1, 0);
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableMask'),
-    @Value, SHADER_UNIFORM_INT);
-
-  Value := IfThen(AMode.Bits[1], 1, 0);
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableScanlines'),
-    @Value, SHADER_UNIFORM_INT);
-
-  Value := IfThen(AMode.Bits[2], 1, 0);
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableCurvature'),
-    @Value, SHADER_UNIFORM_INT);
-
-  Value := IfThen(AMode.Bits[3], 1, 0);
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'enableGrayscale'),
-    @Value, SHADER_UNIFORM_INT);
-
-  SetShaderValue(Shader,
-    GetShaderLocation(Shader, 'curvature'),
-    @Curvature, SHADER_UNIFORM_FLOAT);
 end;
 
 procedure TApplication.RenderVideoFrame;
@@ -579,7 +573,7 @@ begin
     Config.WriteInteger('Window', 'Height', GetScreenHeight);
   end;
 
-  Config.WriteInteger('Window', 'TVMode', TVMode);
+  Config.WriteInteger('Window', 'TVType', TVType);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
 end;
