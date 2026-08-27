@@ -403,33 +403,36 @@ begin
         RectangleCreate(0, 0, Video.width, Video.height),
         RectangleCreate(0, 0, Target.texture.width, Target.texture.height),
         Vector2Zero, 0, WHITE);
-
-      if not OSD.Text.IsEmpty then
-        if GetTime < OSD.Lifetime then
-          DrawText(PAnsiChar(OSD.Text), 20, 20, 16, ORANGE)
-        else
-          OSD.Text := '';
     EndTextureMode;
 
     BeginDrawing;
       ClearBackground(BLACK);
       BeginShaderMode(Shaders[TVType]);
+
+      Dest := if (GetScreenWidth / GetScreenHeight) >= 1.333
+        then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0, GetScreenHeight * 1.333, GetScreenHeight)
+        else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375), GetScreenWidth, GetScreenWidth * 0.75);
+
       DrawTexturePro(
         Target.Texture,
         RectangleCreate(16, 16, Target.texture.width - 32, -Target.texture.height + 32),
-        if (GetScreenWidth / GetScreenHeight) >= 1.333
-          then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0, GetScreenHeight * 1.333, GetScreenHeight)
-          else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375), GetScreenWidth, GetScreenWidth * 0.75),
+        Dest,
         Vector2Zero, 0, WHITE);
       EndShaderMode;
 
       if ShowKeyboard then
       begin
-        Dest := RectangleCreate(0, 0, GetScreenWidth, KBTexture.height * GetScreenWidth / KBTexture.width);
+        Dest.height := KBTexture.height * Dest.width / KBTexture.width;
         DrawTexturePro(KBTexture,
           RectangleCreate(0, 0, KBTexture.width, KBTexture.height), Dest, Vector2Zero, 0, WHITE);
-        DrawRectangleLinesEx(Dest, 2, RAYWHITE);
+        DrawRectangleLinesEx(Dest, 1, RAYWHITE);
       end;
+
+      if not OSD.Text.IsEmpty then
+        if GetTime < OSD.Lifetime then
+          DrawText(PAnsiChar(OSD.Text), Trunc(Dest.x) + 20, Trunc(Dest.y), GetScreenHeight div 12, ORANGE)
+        else
+          OSD.Text := '';
     EndDrawing;
   end;
 

@@ -116,6 +116,7 @@
       </Unit>
       <Unit>
         <Filename Value="main.pas"/>
+        <UnitName Value="un"/>
       </Unit>
     </Units>
   </ProjectOptions>
