@@ -13,8 +13,8 @@ const
   LDBytesAddress = $0556;
 
 type
-  TMemReadProc = function(Address: UInt16): Byte;
-  TMemWriteProc = procedure(Address: UInt16; Value: Byte);
+  TMemReadProc = function(Address: UInt16): Byte of object;
+  TMemWriteProc = procedure(Address: UInt16; Value: Byte) of object;
 
 var
   Blocks: array of TBytes;

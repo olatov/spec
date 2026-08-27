@@ -34,7 +34,7 @@ void main() {
     vec4 color = texture(texture0, uv);
 
     if (enableGrayscale != 0) {
-        float gray = dot(color.rgb, vec3(0.263, 0.678, 0.059));
+        float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
         color.rgb = vec3(gray);
     }
 

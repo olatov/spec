@@ -108,6 +108,9 @@
         <Filename Value="spectrum.pas"/>
         <UnitName Value="Spectrum"/>
       </Unit>
+      <Unit>
+        <Filename Value="main.pas"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
