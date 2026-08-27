@@ -171,25 +171,19 @@ begin
   z80_power(@CPU, AValue);
 end;
 
-function TZXSpectrum48.OnMemoryRead(AAddress: Word): Byte;
+function TZXSpectrum48.OnMemoryRead(AAddress: Word): Byte; inline;
 begin
   Result := if AAddress < $4000
     then ROM[AAddress]
     else RAM[AAddress];
 
-  if Contended and InRange(AAddress, $4000, $7FFF) then Wait(1);
-  {
-    Result := TrapMemRead(address);
-  }
+  if Contended and InRange(AAddress, $4000, $7FFF) then Wait(2);
 end;
 
-procedure TZXSpectrum48.OnMemoryWrite(AAddress: Word; AValue: Byte);
+procedure TZXSpectrum48.OnMemoryWrite(AAddress: Word; AValue: Byte); inline;
 begin
   if AAddress >= $4000 then RAM[AAddress] := AValue;
-  {
-    TrapMemWrite(Address, Value);
-  }
-  if Contended and InRange(AAddress, $4000, $7FFF) then Wait(1);
+  if Contended and InRange(AAddress, $4000, $7FFF) then Wait(2);
 end;
 
 function TZXSpectrum48.OnIORead(AAddress: Word): Byte;
@@ -331,18 +325,19 @@ function TZXSpectrum48.OnIORead(AAddress: Word): Byte;
   end;
 
 begin
-{ WriteLn('IO READ addr ', IntToHex(Address, 4)); }
+  Result := $FF;
 
-Result := $FF;
+  if not AAddress.Bits[0] then
+  begin
+    if Contended then Wait(2);
+    Result := Result and PollKeyboard(Hi(AAddress));
+  end;
 
-if not AAddress.Bits[0] then
-  Result := Result and PollKeyboard(Hi(AAddress));
-
-if not AAddress.Bits[5] then
-  Result := Result and PollKempston;
+  if not AAddress.Bits[5] then
+    Result := Result and PollKempston;
 end;
 
-procedure TZXSpectrum48.OnIOWrite(AAddress: Word; AValue: Byte);
+procedure TZXSpectrum48.OnIOWrite(AAddress: Word; AValue: Byte); inline;
 begin
   case AAddress.Bytes[0] of
     $FE:
@@ -381,7 +376,7 @@ begin
   z80_int(@CPU, AValue);
 end;
 
-procedure TZXSpectrum48.SetBorderColorIndex(AValue: TZXColorIndex);
+procedure TZXSpectrum48.SetBorderColorIndex(AValue: TZXColorIndex); inline;
 begin
   if FBorderColorIndex = AValue then Exit;
   FBorderColorIndex := AValue and %111;
@@ -451,20 +446,32 @@ begin
 end;
 
 procedure TZXSpectrum48.RunScanline; inline;
+const
+  INTLine = 295; { Has to be 64 line times before the first byte
+                   of the screen (16384) is displayed. }
 begin
-  if FCurrentScanline <> 0 then
-    Tick(224)
+  case FCurrentScanline of
+    47..239:
+      begin
+        FContended := True;
+        Tick(128);
+        FContended := False;
+        Tick(96);
+      end;
+
+    INTLine:
+      begin
+        INT := True;
+        Tick(32);
+        INT := False;
+        Tick(192);
+    end;
+
   else
-  begin
-    Tick(16);
-    INT := True;
-    Tick(32);
-    INT := False;
-    Tick(176);
+    Tick(224);
   end;
 
   Inc(FCurrentScanline);
-  FContended := InRange(FCurrentScanline, 64, 255);
 end;
 
 procedure TZXSpectrum48.LoadZ80(AFilename: String);

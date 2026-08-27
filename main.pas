@@ -46,7 +46,6 @@ type
   end;
 
 const
-  StartFullscreen = True;
   ImageWidth = 352;
   ImageHeight = 288;
   ScanlineTStates = 224;
@@ -111,7 +110,7 @@ begin
   FFullscreen := AValue;
 
   ToggleBorderlessWindowed;
-  if Fullscreen then
+  if FFullscreen then
     HideCursor
   else
     ShowCursor;
@@ -302,12 +301,6 @@ begin
 
   TVMode := Config.ReadInteger('Window', 'TVMode', 7);
 
-  if Fullscreen then
-  begin
-    ToggleBorderlessWindowed;
-    HideCursor;
-  end;
-
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(Target.texture, TEXTURE_WRAP_CLAMP);
@@ -496,7 +489,7 @@ procedure TApplication.RenderVideoFrame;
     Data: Byte;
     Pair: ^TPixelPair;
   begin
-    Y := ALine - 16;
+    Y := ALine;
     if not InRange(Y, 0, ImageHeight - 1) then Exit;
 
     { Border }
@@ -543,10 +536,10 @@ begin
 
   {
     RASTER:
-      VBlank: 8 lines (INT in the end of line 0)
-      Top border: 56 (8 invisible + 48 visible) lines
+      Top border: 48 lines
       Main screen: 192 lines
-      Bottom border: 56 lines
+      Bottom border: 48 lines
+      Retrace + "invisible" border: 24 lines
     TOTAL: 312 lines
   }
   for I := 1 to 312 do
