@@ -22,6 +22,16 @@ type
     procedure TapeSaved(const AFilename: String);
     function QuickLoad: Boolean;
     procedure QuickSave;
+    function SaveDir: String;
+    function SnapshotFiles: TStringArray;
+    function ResolveSaveName(const AName: String): String;
+    function DefaultSaveName: String;
+    procedure DescribeSaveName(AItem: TEditMenuItem);
+    function SaveSnapshot(const AName: String; out AError: String): Boolean;
+    function IsLoadable(const AFilename: String): Boolean;
+    function EntriesOf(const APath: String; ADirectories: Boolean): TStringArray;
+    procedure BrowseFiles(AItem: TFileMenuItem);
+    function LoadFile(const AFilename: String; out AError: String): Boolean;
     procedure SetFullscreen(AValue: Boolean);
     procedure SetVolume(AVolume: Single; K: Single = 4);
   public
@@ -36,6 +46,7 @@ type
     Video: TTexture2D;
     Menu: TMenu;
     SavePath: String;
+    BrowsePath: String;   { folder the Load browser last showed }
     Shaders: array[0..2] of TShader;
     TapeSound: Boolean;   { [Tape] Sound - play tape noise through the speaker }
     TVType: Byte;
@@ -114,6 +125,10 @@ const
   INPUT_KEY_DOWN = 2;
   TVTypeNames: array[0..2] of String = ('Colour', 'BW', 'Modern');
 
+  { What the file browser offers and LoadFile knows how to open. Anything else
+    is left out of the list rather than failing once it is picked. }
+  LoadableExtensions: array[0..2] of String = ('.z80', '.tap', '.wav');
+
 var
   { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_AUTOSAVE env
     vars): scripts the LOAD or SAVE keystrokes via raylib automation events,
@@ -143,6 +158,7 @@ var
 
 implementation
 
+procedure SetOSD(AText: String; ADuration: Double = 2); forward;
 procedure TApplication.SetFullscreen(AValue: Boolean);
 begin
   if FFullscreen = AValue then Exit;
@@ -169,6 +185,267 @@ end;
 procedure TApplication.QuickSave;
 begin
   Machine.SaveZ80(TPath.Combine(SavePath, 'quicksave.z80'));
+end;
+
+{ Where named snapshots live. An unset [Files] SavePath means "next to the
+  emulator", i.e. wherever it was started from. }
+function TApplication.SaveDir: String;
+begin
+  Result := if SavePath.IsEmpty then GetCurrentDir else SavePath;
+end;
+
+{ Bare names of the snapshots already in SaveDir, sorted. }
+function TApplication.SnapshotFiles: TStringArray;
+var
+  Names: TStringList;
+  Filename: String;
+begin
+  Names := TStringList.Create;
+  try
+    try
+      for Filename in TDirectory.GetFiles(SaveDir, '*.z80') do
+        Names.Add(TPath.GetFileName(Filename));
+    except
+      { unreadable folder - the dialog simply lists nothing }
+    end;
+
+    Names.Sort;
+    Result := Names.ToStringArray;
+  finally
+    Names.Free;
+  end;
+end;
+
+{ Turns what was typed into a bare '<name>.z80' inside SaveDir, or '' if there
+  is nothing usable in it. Any directory part is dropped rather than honoured:
+  the field names a save, it does not navigate. }
+function TApplication.ResolveSaveName(const AName: String): String;
+begin
+  Result := TPath.GetFileName(AName.Trim);
+  if Result.IsEmpty then Exit;
+  if not Result.ToLower.EndsWith('.z80') then Result := Result + '.z80';
+end;
+
+{ The name the Save field opens on: the loaded snapshot's or tape's own name,
+  numbered up so a second save of the same game doesn't land on the first. }
+function TApplication.DefaultSaveName: String;
+var
+  Base, Candidate: String;
+  Suffix: Integer = 0;
+begin
+  Base := TPath.GetFileNameWithoutExtension(Snapshot);
+  if Base.IsEmpty then Base := 'snapshot';
+
+  Candidate := Base;
+  while TFile.Exists(TPath.Combine(SaveDir, Candidate + '.z80')) do
+  begin
+    Inc(Suffix);
+    Candidate := $'{Base}-{Suffix}';
+  end;
+
+  Result := Candidate;
+end;
+
+{ Keeps the Save field's warning and its list of existing snapshots in step
+  with what has been typed so far. }
+procedure TApplication.DescribeSaveName(AItem: TEditMenuItem);
+var
+  Files: TStringArray;
+  Shown, I: Integer;
+begin
+  if TFile.Exists(TPath.Combine(SaveDir, ResolveSaveName(AItem.Value))) then
+    AItem.Warning := 'A file of that name will be overwritten';
+
+  Files := SnapshotFiles;
+  Shown := Min(Length(Files), 4);
+
+  AItem.Notes := [$'Folder: {SaveDir}'];
+  if Length(Files) > 0 then
+  begin
+    AItem.Notes := AItem.Notes + [''] + ['Already there:'];
+    for I := 0 to Shown - 1 do
+      AItem.Notes := AItem.Notes + ['  ' + Files[I]];
+    if Length(Files) > Shown then
+      AItem.Notes := AItem.Notes + [$'  ... and {Length(Files) - Shown} more'];
+  end;
+end;
+
+{ Writes the machine's state under a typed-in name. Anything the user types is
+  taken as a plain file name in SaveDir - a path they type is not honoured. }
+function TApplication.SaveSnapshot(const AName: String; out AError: String): Boolean;
+var
+  Filename: String;
+begin
+  AError := '';
+  Filename := ResolveSaveName(AName);
+  if Filename.IsEmpty then
+  begin
+    AError := 'Type a file name';
+    Exit(False);
+  end;
+
+  try
+    Machine.SaveZ80(TPath.Combine(SaveDir, Filename));
+  except
+    on E: Exception do
+    begin
+      AError := E.Message;
+      Exit(False);
+    end;
+  end;
+
+  SetOSD($'Saved {Filename}');
+  Result := True;
+end;
+
+function TApplication.IsLoadable(const AFilename: String): Boolean;
+var
+  Extension, Candidate: String;
+begin
+  Extension := TPath.GetExtension(AFilename).ToLower;
+  for Candidate in LoadableExtensions do
+    if Candidate = Extension then Exit(True);
+  Result := False;
+end;
+
+{ Bare names of the subfolders of APath, or of the files in it the emulator can
+  open, sorted and case-insensitive. An unreadable folder simply comes back
+  empty - the browser shows it as such rather than refusing to open. }
+function TApplication.EntriesOf(const APath: String; ADirectories: Boolean): TStringArray;
+var
+  Names: TStringList;
+  Entry, Folder: String;
+begin
+  Names := TStringList.Create;
+  try
+    try
+      if ADirectories then
+        for Entry in TDirectory.GetDirectories(APath) do
+        begin
+          Folder := TPath.GetFileName(ExcludeTrailingPathDelimiter(Entry));
+          if not Folder.StartsWith('.') then Names.Add(Folder);   { no dot-folders }
+        end
+      else
+        for Entry in TDirectory.GetFiles(APath) do
+          if IsLoadable(Entry) then Names.Add(TPath.GetFileName(Entry));
+    except
+      { unreadable folder }
+    end;
+
+    Names.Sort;
+    Result := Names.ToStringArray;
+  finally
+    Names.Free;
+  end;
+end;
+
+{ Fills the browser page for the folder it is showing: the way up, then the
+  subfolders, then the loadable files. Every entry carries its full path in
+  Data, so the two handlers below are shared by all of them - closures must
+  not capture a loop variable. }
+procedure TApplication.BrowseFiles(AItem: TFileMenuItem);
+var
+  Entry, Parent: String;
+  Navigate, Open: TMenuItemNotify;
+  Count: Integer = 0;
+begin
+  Navigate := procedure(Sender: TMenuItem)
+    begin
+      (Sender.Parent as TFileMenuItem).Browse(Sender.Data);
+    end;
+
+  Open := procedure(Sender: TMenuItem)
+    var
+      Error: String;
+    begin
+      if LoadFile(Sender.Data, Error) then
+      begin
+        SetOSD($'Loaded {TPath.GetFileName(Sender.Data)}');
+        Sender.Menu.Close;   { frees Sender - nothing may follow }
+      end
+      else
+        Sender.Parent.Warning := $'{TPath.GetFileName(Sender.Data)}: {Error}';
+    end;
+
+  BrowsePath := AItem.Path;   { where the browser reopens next time }
+
+  Parent := TPath.GetDirectoryName(ExcludeTrailingPathDelimiter(AItem.Path));
+  if not Parent.IsEmpty and (Parent <> AItem.Path) then
+    AItem.AddItem('[..]', '', Navigate).Data := Parent;
+
+  for Entry in EntriesOf(AItem.Path, True) do
+  begin
+    AItem.AddItem($'[{Entry}]', '', Navigate).Data := TPath.Combine(AItem.Path, Entry);
+    Inc(Count);
+  end;
+
+  for Entry in EntriesOf(AItem.Path, False) do
+  begin
+    AItem.AddItem(Entry, '', Open).Data := TPath.Combine(AItem.Path, Entry);
+    Inc(Count);
+  end;
+
+  if Count = 0 then AItem.AddItem('(nothing to load here)');
+end;
+
+{ Opens whatever kind of file this is. A snapshot simply becomes the machine's
+  state; a tape is inserted and the machine rewound to a bare BASIC prompt, so
+  the scripted LOAD "" is typed into the ROM's editor and not into whatever
+  happened to be running. }
+function TApplication.LoadFile(const AFilename: String; out AError: String): Boolean;
+var
+  Extension: String;
+  Tape: Boolean;
+begin
+  AError := '';
+  Result := False;
+
+  if not TFile.Exists(AFilename) then
+  begin
+    AError := 'File not found';
+    Exit;
+  end;
+
+  Extension := TPath.GetExtension(AFilename).ToLower;
+  Tape := (Extension = '.tap') or (Extension = '.wav');
+
+  try
+    if Extension = '.tap' then
+      Result := Machine.LoadTAP(AFilename)
+    else if Extension = '.wav' then
+      { Real-time load: the ROM/turbo loader polls the EAR line; playback
+        auto-starts (and auto-pauses between blocks) once LD-BYTES runs. }
+      Result := Machine.LoadWAV(AFilename)
+    else
+    begin
+      Machine.LoadZ80(AFilename);
+      Result := True;
+    end;
+  except
+    on E: Exception do
+    begin
+      AError := E.Message;
+      Exit(False);
+    end;
+  end;
+
+  if not Result then
+  begin
+    { Leave the ROM unpatched if the tape fails to load, so a bad file doesn't
+      silently break normal BASIC boot. }
+    AError := 'Not a readable ' + Extension.Substring(1).ToUpper + ' file';
+    Exit;
+  end;
+
+  Snapshot := AFilename;   { the Save field takes its default name from here }
+
+  if Tape then
+  begin
+    Machine.Reset;
+    if Config.ReadBool('Tape', 'AutoLoad', True)
+      or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
+      AutoLoadFrame := 100;   { give the ROM time to finish booting to BASIC first }
+  end;
 end;
 
 
@@ -224,8 +501,6 @@ begin
   if Mixing then Inc(BucketTapeHigh, Machine.TapeHighTStates(PrevT, NewT));
   PrevT := NewT;
 end;
-
-procedure SetOSD(AText: String; ADuration: Double = 2); forward;
 
 procedure TApplication.TapeSaved(const AFilename: String);
 begin
@@ -414,6 +689,7 @@ begin
   Machine.OnTapeSaved := @TapeSaved;
 
   SavePath := Config.ReadString('Files', 'SavePath', '');
+  BrowsePath := SaveDir;
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
@@ -533,6 +809,8 @@ begin
 end;
 
 function TApplication.BuildMenu: TMenu;
+var
+  SaveItem: TEditMenuItem;
 begin
   Result := TMenu.Create(Self);
 
@@ -542,19 +820,32 @@ begin
       Sender.Menu.Close;
     end);
 
-  Result.Root.AddItem('Quick load', '',
-    procedure(Sender: TMenuItem)
+  Result.Root.AddBrowser('Load', BrowsePath,
+    procedure(Sender: TFileMenuItem)
     begin
-      QuickLoad;
-      Sender.Menu.Close;
+      BrowseFiles(Sender);
     end);
 
-  Result.Root.AddItem('Quick save', '',
-    procedure(Sender: TMenuItem)
+  SaveItem := Result.Root.AddEdit('Save', 'Save snapshot as:',
+    procedure(Sender: TEditMenuItem)
+    var
+      Error: String;
     begin
-      QuickSave;
-      Sender.Menu.Close;
+      if SaveSnapshot(Sender.Value, Error) then
+        Sender.Menu.Close   { frees Sender - nothing may follow }
+      else
+        Sender.Warning := Error;
     end);
+
+  SaveItem.OnApply := procedure(Sender: TMenuItem)
+    begin
+      Sender.Value := DefaultSaveName;
+    end;
+
+  SaveItem.OnChange := procedure(Sender: TEditMenuItem)
+    begin
+      DescribeSaveName(Sender);
+    end;
 
   Result.Root.AddItem('TV-set', TVTypeNames[TVType],
     procedure(Sender: TMenuItem)
@@ -617,6 +908,7 @@ end;
 procedure TApplication.Run;
 var
   I: Integer;
+  Error: String;
 begin
   Machine.Power := True;
 
@@ -626,27 +918,12 @@ begin
 
   if not Snapshot.IsEmpty then
   begin
-    if Snapshot.ToLower.EndsWith('.tap', True) then
+    { A bare name on the command line means a snapshot. }
+    if TPath.GetExtension(Snapshot).IsEmpty then Snapshot := Snapshot + '.z80';
+    if not LoadFile(Snapshot, Error) then
     begin
-      { Leave the ROM unpatched if the tape fails to load, so a bad
-        filename doesn't silently break normal BASIC boot. }
-
-      if Machine.LoadTAP(Snapshot) then
-        if Config.ReadBool('Tape', 'AutoLoad', True) or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
-          AutoLoadFrame := 100; { give the ROM time to finish booting to BASIC first }
-
-    end else if Snapshot.ToLower.EndsWith('.wav', True) then
-    begin
-      { Real-time load: the ROM/turbo loader polls the EAR line; playback
-        auto-starts (and auto-pauses between blocks) once LD-BYTES runs. }
-      if Machine.LoadWAV(Snapshot) then
-        if Config.ReadBool('Tape', 'AutoLoad', True) or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
-          AutoLoadFrame := 100;
-
-    end else
-    begin
-      if not Snapshot.ToLower.EndsWith('.z80') then Snapshot := Snapshot + '.z80';
-      Machine.LoadZ80(Snapshot);
+      SetOSD($'{TPath.GetFileName(Snapshot)}: {Error}', 5);
+      Snapshot := '';
     end;
   end;
 
