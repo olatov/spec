@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
-  Z80, Spectrum, OSDMenu;
+  Z80, Spectrum, OSDMenu, Keyboards;
 
 type
   TApplication = class(TComponent)
@@ -35,6 +35,7 @@ type
     Image: TImage;
     Video: TTexture2D;
     Menu: TMenu;
+    SavePath: String;
     Shaders: array[0..2] of TShader;
     TapeSound: Boolean;   { [Tape] Sound - play tape noise through the speaker }
     TVType: Byte;
@@ -143,20 +144,6 @@ var
 
 implementation
 
-function GetQuickSaveFilename: String;
-var
-  Path: String = '';
-begin
-  Path := GetAppConfigDir(False);
-  TDirectory.CreateDirectory(Path);
-  Result := TPath.Combine(Path, 'quicksave.z80');
-end;
-
-procedure TApplication.QuickSave;
-begin
-  Machine.SaveZ80(GetQuickSaveFilename);
-end;
-
 procedure TApplication.SetFullscreen(AValue: Boolean);
 begin
   if FFullscreen = AValue then Exit;
@@ -173,11 +160,16 @@ function TApplication.QuickLoad: Boolean;
 var
   Filename: String;
 begin
-  Filename := GetQuickSaveFilename;
+  Filename := TPath.Combine(SavePath, 'quicksave.z80');
   if not TFile.Exists(Filename) then Exit(False);
 
   Machine.LoadZ80(Filename);
   Result := True;
+end;
+
+procedure TApplication.QuickSave;
+begin
+  Machine.SaveZ80(TPath.Combine(SavePath, 'quicksave.z80'));
 end;
 
 
@@ -422,6 +414,8 @@ begin
   Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
   Machine.OnTapeSaved := @TapeSaved;
 
+  SavePath := Config.ReadString('Files', 'SavePath', '');
+
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
 
@@ -510,6 +504,17 @@ begin
         RectangleCreate(0, 0, KBTexture.width, KBTexture.height), Dest,
           Vector2Zero, 0, WHITE);
       DrawRectangleLinesEx(Dest, 1, RAYWHITE);
+      Dest.y := Dest.height;
+      DrawRectangleLinesEx(Dest, 1, RAYWHITE);
+      Dest.height := Dest.height * 0.1;
+      DrawRectangleRec(Dest, BLACK);
+      DrawRectangleLinesEx(Dest, 1, RAYWHITE);
+
+      DrawText(PChar('CS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.CapsShiftKeys)) + ']'),
+        Trunc(Dest.width * 0.012), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
+
+      DrawText(PChar('SS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
+        Trunc(Dest.width * 0.512), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
     end;
 
     if not OSD.Text.IsEmpty then

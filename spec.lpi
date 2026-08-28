@@ -109,6 +109,10 @@
         <Filename Value="osdmenu.pas"/>
         <UnitName Value="OSDMenu"/>
       </Unit>
+      <Unit>
+        <Filename Value="keyboards.pas"/>
+        <UnitName Value="Keyboards"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

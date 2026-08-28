@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, Math, System.IOUtils,
   Raylib,
-  Z80;
+  Z80, Keyboards;
 
 type
   TZXColorIndex = 0..15;
@@ -107,6 +107,7 @@ type
     CPU: TZ80;
     ROM: array[0..$3FFF] of Byte;
     RAM: array[$4000..$FFFF] of Byte;
+    Keyboard: TKeyboard;
     AudioPin: Boolean;
     MicPin: Boolean;      { port $FE bit 3 - what SAVE modulates }
     Joystick: TJoystick;
@@ -136,6 +137,7 @@ type
       captured (and heard) either way. }
     property SaveToWav: Boolean read FSaveEnabled write FSaveEnabled;
     constructor Create;
+    destructor Destroy; override;
     procedure Reset;
     procedure Wait(ACycles: Integer);
     procedure Tick(ACycles: Integer);
@@ -305,126 +307,6 @@ begin
 end;
 
 function TZXSpectrum48.OnIORead(AAddress: Word): Byte;
-  function PollKeyboard(AMask: Byte): Byte;
-  var
-    Data: Byte;
-  begin
-    Result := 0;
-    Data := 0;
-
-    if not AMask.Bits[0] then
-    begin
-      { $FEFE }
-      Data.Bits[0] := IsKeyDown(KEY_LEFT_SHIFT)
-        or IsKeyDown(KEY_RIGHT_SHIFT)
-        or IsKeyDown(KEY_BACKSPACE);
-      Data.Bits[1] := IsKeyDown(KEY_Z);
-      Data.Bits[2] := IsKeyDown(KEY_X);
-      Data.Bits[3] := IsKeyDown(KEY_C);
-      Data.Bits[4] := IsKeyDown(KEY_V);
-      Result := Result or Data;
-    end;
-
-    if not AMask.Bits[1] then
-    begin
-      { $FDFE }
-      Data.Bits[0] := IsKeyDown(KEY_A);
-      Data.Bits[1] := IsKeyDown(KEY_S);
-      Data.Bits[2] := IsKeyDown(KEY_D);
-      Data.Bits[3] := IsKeyDown(KEY_F);
-      Data.Bits[4] := IsKeyDown(KEY_G);
-      Result := Result or Data;
-    end;
-
-    if not AMask.Bits[2] then
-    begin
-      { $FBFE }
-      Data.Bits[0] := IsKeyDown(KEY_Q);
-      Data.Bits[1] := IsKeyDown(KEY_W);
-      Data.Bits[2] := IsKeyDown(KEY_E);
-      Data.Bits[3] := IsKeyDown(KEY_R);
-      Data.Bits[4] := IsKeyDown(KEY_T);
-      Result := Result or Data;
-    end;
-
-    if not AMask.Bits[3] then
-    begin
-      { $F7FE }
-      Data.Bits[0] := IsKeyDown(KEY_ONE);
-      Data.Bits[1] := IsKeyDown(KEY_TWO);
-      Data.Bits[2] := IsKeyDown(KEY_THREE);
-      Data.Bits[3] := IsKeyDown(KEY_FOUR);
-      Data.Bits[4] := IsKeyDown(KEY_FIVE);
-
-      if Joystick.Type_ = jtCursor then
-        Data.Bits[4] := Data.Bits[4] or IsKeyDown(KEY_LEFT);
-
-      Result := Result or Data;
-    end;
-
-    if not AMask.Bits[4] then
-    begin
-      { $EFFE }
-      Data.Bits[0] := IsKeyDown(KEY_ZERO) or IsKeyDown(KEY_BACKSPACE);
-      Data.Bits[1] := IsKeyDown(KEY_NINE);
-      Data.Bits[2] := IsKeyDown(KEY_EIGHT);
-      Data.Bits[3] := IsKeyDown(KEY_SEVEN);
-      Data.Bits[4] := IsKeyDown(KEY_SIX);
-
-      if Joystick.Type_ = jtCursor then
-      begin
-        Data.Bits[0] := Data.Bits[0] or IsKeyDown(Joystick.Keys.Fire1);
-        Data.Bits[2] := Data.Bits[2] or IsKeyDown(Joystick.Keys.Right);
-        Data.Bits[3] := Data.Bits[3] or IsKeyDown(Joystick.Keys.Up);
-        Data.Bits[4] := Data.Bits[4] or IsKeyDown(Joystick.Keys.Down);
-      end;
-
-      Result := Result or Data;
-    end;
-
-    if not AMask.Bits[5] then
-    begin
-      { $DFFE }
-      Data.Bits[0] := IsKeyDown(KEY_P);
-      Data.Bits[1] := IsKeyDown(KEY_O);
-      Data.Bits[2] := IsKeyDown(KEY_I);
-      Data.Bits[3] := IsKeyDown(KEY_U);
-      Data.Bits[4] := IsKeyDown(KEY_Y);
-      Result := Result or Data;
-    end;
-
-    if not AMask.Bits[6] then
-    begin
-      { $BFFE }
-      Data.Bits[0] := IsKeyDown(KEY_ENTER);
-      Data.Bits[1] := IsKeyDown(KEY_L)
-        or IsKeyDown(KEY_EQUAL);
-      Data.Bits[2] := IsKeyDown(KEY_K)
-        or (IsKeyDown(KEY_KP_ADD));
-      Data.Bits[3] := IsKeyDown(KEY_J)
-        or IsKeyDown(KEY_MINUS);
-      Data.Bits[4] := IsKeyDown(KEY_H);
-      Result := Result or Data;
-    end;
-
-    if not AMask.Bits[7] then
-    begin
-      { $7FFE }
-      Data.Bits[0] := IsKeyDown(KEY_SPACE);
-      Data.Bits[1] := IsKeyDown(KEY_LEFT_CONTROL)
-        or IsKeyDown(KEY_RIGHT_CONTROL)
-        or IsKeyDown(KEY_KP_ADD)
-        or IsKeyDown(KEY_MINUS)
-        or IsKeyDown(KEY_EQUAL);
-      Data.Bits[2] := IsKeyDown(KEY_M);
-      Data.Bits[3] := IsKeyDown(KEY_N);
-      Data.Bits[4] := IsKeyDown(KEY_B);
-      Result := Result or Data;
-    end;
-
-    Result := not Result;
-  end;
-
   function PollKempston: Byte;
   begin
     if Joystick.Type_ <> jtKempston then
@@ -448,7 +330,7 @@ begin
   if not AAddress.Bits[0] then
   begin
     if Contended then Wait(2);
-    Result := Result and PollKeyboard(Hi(AAddress));
+    Result := Result and Keyboard.Poll(AAddress);
 
     { EAR (bit 6): fed from the WAV tape while one is loaded, so the ROM /
       turbo loader can time the edges. Overrides the idle "no signal" 1. }
@@ -584,6 +466,8 @@ begin
     context := Self;
   end;
 
+  Keyboard := TKeyboard.Create;
+
   with Joystick do
   begin
     Type_ := jtKempston;
@@ -599,6 +483,12 @@ begin
   end;
 
   Reset;
+end;
+
+destructor TZXSpectrum48.Destroy;
+begin
+  inherited Destroy;
+  FreeAndNil(Keyboard);
 end;
 
 procedure TZXSpectrum48.Reset;
