@@ -558,8 +558,13 @@ begin
   if LibZ80Path.IsEmpty then
     LibZ80Path := TPath.Combine('lib/', DefaultZ80LibPath);
 
-  if not Z80.LoadLibrary(LibZ80Path) then
-    raise Exception.CreateFmt('Failed to load %s', [LibZ80Path]);
+  try
+    if not Z80.LoadLibrary(LibZ80Path) then
+      raise Exception.CreateFmt('Could not load %s', [LibZ80Path]);
+  except
+    on E: Exception do
+      raise Exception.CreateFmt('Failed to initialize libZ80: %s', [E.Message]);
+  end;
 
   Machine := TZXSpectrum48.Create;
   Config := TIniFile.Create(GetAppConfigFile(False));
@@ -571,25 +576,26 @@ var
 begin
   inherited Destroy;
 
-  SaveConfig;
+  if Assigned(Config) then SaveConfig;
   FreeAndNil(Config);
 
-  UnloadAudioStream(AudioStream);
-  CloseAudioDevice;
+  FreeAndNil(Machine);
 
-  UnloadFont(Font);
+  if IsAudioStreamValid(AudioStream) then UnloadAudioStream(AudioStream);
+  if IsAudioDeviceReady then CloseAudioDevice;
+
+  if IsFontValid(Font) then UnloadFont(Font);
 
   for I := 0 to High(Shaders) do
-    UnloadShader(Shaders[I]);
-  UnloadRenderTexture(Target);
-  UnloadTexture(Video);
-  UnloadImage(Image);
+    if IsShaderValid(Shaders[I]) then UnloadShader(Shaders[I]);
+
+  if IsRenderTextureValid(Target) then UnloadRenderTexture(Target);
+  if IsTextureValid(Video) then UnloadTexture(Video);
+  if IsImageValid(Image) then UnloadImage(Image);
 
   if IsTextureValid(KBTexture) then UnloadTexture(KBTexture);
 
-  CloseWindow;
-
-  FreeAndNil(Machine);
+  if IsWindowReady then CloseWindow;
 end;
 
 procedure TApplication.Initialize;
@@ -1146,6 +1152,8 @@ end;
 
 procedure TApplication.SaveConfig;
 begin
+  if not Assigned(Config) then Exit;
+
   Config.WriteBool('Window', 'Fullscreen', Fullscreen);
   if not Fullscreen then
   begin
