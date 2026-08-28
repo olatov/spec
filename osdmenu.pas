@@ -10,9 +10,9 @@ uses
 
 type
   TMenu = class;
-  TMenuNotify = reference to procedure(Sender: TMenu);
+  TMenuNotify = reference to procedure(ASender: TMenu; AQuit: Boolean);
   TMenuItem = class;
-  TMenuItemNotify = reference to procedure(Sender: TMenuItem);
+  TMenuItemNotify = reference to procedure(ASender: TMenuItem);
 
   TMenuItem = class
   private
@@ -151,7 +151,7 @@ begin
   begin
     Root.SelectedItem.Escape;
     if not Root.SelectedItem.Active and Assigned(OnClose) then
-      OnClose(Self);
+      OnClose(Self, True);
   end;
 end;
 
@@ -166,7 +166,7 @@ begin
   Root := TRootMenuItem.Create(Self);
   Root.OnEscape := procedure(Sender: TMenuItem)
     begin
-      if Assigned(OnClose) then OnClose(Self);
+      if Assigned(OnClose) then OnClose(Self, True);
     end;
 
   FTarget := LoadRenderTexture(640, 480);
@@ -182,7 +182,7 @@ end;
 
 procedure TMenu.Close;
 begin
-  if Assigned(OnClose) then OnClose(Self);
+  if Assigned(OnClose) then OnClose(Self, False);
 end;
 
 procedure TMenu.Render;
@@ -211,7 +211,7 @@ begin
       if IsSelected then Yellow else ORANGE);
   end;
 
-  DrawText('ESC - close menu', 24, 440, 20, YELLOW);
+  DrawText('ESC again - Quit', 24, 440, 20, YELLOW);
 
   EndTextureMode;
 end;

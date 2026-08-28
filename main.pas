@@ -525,6 +525,12 @@ function TApplication.BuildMenu: TMenu;
 begin
   Result := TMenu.Create(Self);
 
+  Result.Root.AddItem('Resume', '',
+    procedure(Sender: TMenuItem)
+    begin
+      Sender.Menu.Close;
+    end);
+
   Result.Root.AddItem('Quick load', '',
     procedure(Sender: TMenuItem)
     begin
@@ -665,9 +671,10 @@ begin
   if IsKeyPressed(KEY_ESCAPE) then
   begin
     Menu := BuildMenu;
-    Menu.OnClose := procedure(Sender: TMenu)
+    Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
       begin
         FreeAndNil(Menu);
+        QuitRequested := QuitRequested or AQuit;
       end;
   end;
 
