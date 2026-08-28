@@ -691,6 +691,10 @@ begin
   SavePath := Config.ReadString('Files', 'SavePath', '');
   BrowsePath := SaveDir;
 
+  Machine.JoystickIndex := Config.ReadInteger('Joystick', 'Index', 2);
+  if Machine.JoystickIndex >= Machine.Joysticks.Count then
+    Machine.JoystickIndex := 0;
+
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
 
@@ -1135,6 +1139,8 @@ begin
   Config.WriteBool('Audio', 'Muted', Muted);
   Config.WriteBool('Tape', 'Sound', TapeSound);
   Config.WriteBool('Tape', 'Save', Machine.SaveToWav);
+
+  Config.WriteInteger('Joystick', 'Index', Machine.JoystickIndex);
 end;
 
 { Paints every border pixel the beam has swept between BorderT and AT in the
