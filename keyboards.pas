@@ -130,11 +130,6 @@ begin
     Data.Bits[2] := IsKeyDown(KEY_THREE);
     Data.Bits[3] := IsKeyDown(KEY_FOUR);
     Data.Bits[4] := IsKeyDown(KEY_FIVE);
-   {
-    if Joystick.Type_ = jtCursor then
-      Data.Bits[4] := Data.Bits[4] or IsKeyDown(KEY_LEFT);
-    }
-
     Result := Result or Data;
   end;
 
@@ -146,16 +141,6 @@ begin
     Data.Bits[2] := IsKeyDown(KEY_EIGHT);
     Data.Bits[3] := IsKeyDown(KEY_SEVEN);
     Data.Bits[4] := IsKeyDown(KEY_SIX);
-    {
-    if Joystick.Type_ = jtCursor then
-    begin
-      Data.Bits[0] := Data.Bits[0] or IsKeyDown(Joystick.Keys.Fire1);
-      Data.Bits[2] := Data.Bits[2] or IsKeyDown(Joystick.Keys.Right);
-      Data.Bits[3] := Data.Bits[3] or IsKeyDown(Joystick.Keys.Up);
-      Data.Bits[4] := Data.Bits[4] or IsKeyDown(Joystick.Keys.Down);
-    end;
-    }
-
     Result := Result or Data;
   end;
 

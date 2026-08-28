@@ -5,9 +5,9 @@ unit Spectrum;
 interface
 
 uses
-  Classes, SysUtils, Math, System.IOUtils,
+  Classes, SysUtils, Math, System.IOUtils, FGL,
   Raylib,
-  Z80, Keyboards;
+  Z80, Keyboards, Joysticks;
 
 type
   TZXColorIndex = 0..15;
@@ -21,14 +21,6 @@ type
   { The raylib image's raw R8G8B8A8 buffer, addressed directly. }
   TPixels = array[0..(352 * 288) - 1] of TColorB;
   PPixels = ^TPixels;
-
-  TJoystickType = (jtNone, jtKempston, jtCursor);
-  TJoystick = record
-    Type_: TJoystickType;
-    Keys: record
-      Left, Right, Up, Down, Fire1, Fire2: TKeyboardKey;
-    end;
-  end;
 
   TAdvanceAudioNotify = procedure(ANewT: Integer) of object;
   TTapeSavedNotify = procedure(const AFilename: String) of object;
@@ -78,6 +70,8 @@ type
     FSaveLastEdgeFrame: QWord;
     FSaveName: String;
     procedure ArmSave;
+    function GetJoystick: TJoystick;
+    function GetJoystickName: String;
     procedure RecordMicEdge;
     procedure FinishSave;
     function WriteSaveWAV(const AFilename: String): Boolean;
@@ -110,10 +104,14 @@ type
     Keyboard: TKeyboard;
     AudioPin: Boolean;
     MicPin: Boolean;      { port $FE bit 3 - what SAVE modulates }
-    Joystick: TJoystick;
+    Joysticks: TFPGObjectList<TJoystick>;
+    JoystickIndex: Integer;
     AdvanceAudio: TAdvanceAudioNotify;
     OnTapeSaved: TTapeSavedNotify;
     BorderChange: TBorderChangeNotify;
+    property Joystick: TJoystick read GetJoystick;
+    property JoystickName: String read GetJoystickName;
+    procedure SwitchJoystick;
     function OnMemoryRead(AAddress: Word): Byte;
     procedure OnMemoryWrite(AAddress: Word; AValue: Byte);
     function OnIORead(AAddress: Word): Byte;
@@ -307,23 +305,6 @@ begin
 end;
 
 function TZXSpectrum48.OnIORead(AAddress: Word): Byte;
-  function PollKempston: Byte;
-  begin
-    if Joystick.Type_ <> jtKempston then
-    begin
-      Result := $FF;
-      Exit;
-    end;
-
-    Result := 0;
-    Result.Bits[0] := IsKeyDown(Joystick.Keys.Right);
-    Result.Bits[1] := IsKeyDown(Joystick.Keys.Left);
-    Result.Bits[2] := IsKeyDown(Joystick.Keys.Down);
-    Result.Bits[3] := IsKeyDown(Joystick.Keys.Up);
-    Result.Bits[4] := IsKeyDown(Joystick.Keys.Fire1);
-    Result.Bits[5] := IsKeyDown(Joystick.Keys.Fire2);
-  end;
-
 begin
   Result := $FF;
 
@@ -331,6 +312,8 @@ begin
   begin
     if Contended then Wait(2);
     Result := Result and Keyboard.Poll(AAddress);
+    if (Joystick is TCursorJoystick) then
+      Result := Result and TCursorJoystick(Joystick).Poll(AAddress);
 
     { EAR (bit 6): fed from the WAV tape while one is loaded, so the ROM /
       turbo loader can time the edges. Overrides the idle "no signal" 1. }
@@ -341,8 +324,8 @@ begin
         Result := Result and not Byte(EarBit);
   end;
 
-  if not AAddress.Bits[5] then
-    Result := Result and PollKempston;
+  if not AAddress.Bits[5] and (Joystick is TKempstonJoystick) then
+    Result := Result and TKempstonJoystick(Joystick).Poll(AAddress);
 end;
 
 procedure TZXSpectrum48.OnIOWrite(AAddress: Word; AValue: Byte); inline;
@@ -468,19 +451,12 @@ begin
 
   Keyboard := TKeyboard.Create;
 
-  with Joystick do
-  begin
-    Type_ := jtKempston;
-    with Joystick.Keys do
-    begin
-      Left := KEY_LEFT;
-      Right := KEY_RIGHT;
-      Up := KEY_UP;
-      Down := KEY_DOWN;
-      Fire1 := KEY_LEFT_ALT;
-      Fire2 := KEY_RIGHT_ALT;
-    end;
-  end;
+  Joysticks := TFPGObjectList<TJoystick>.Create;
+  Joysticks.Add(Nil); { No joystick }
+  Joysticks.Add(TKempstonJoystick.Create);
+  Joysticks.Add(TCursorJoystick.Create);
+
+  JoystickIndex := 1; { Kempston }
 
   Reset;
 end;
@@ -489,6 +465,7 @@ destructor TZXSpectrum48.Destroy;
 begin
   inherited Destroy;
   FreeAndNil(Keyboard);
+  FreeAndNil(Joysticks);
 end;
 
 procedure TZXSpectrum48.Reset;
@@ -998,6 +975,12 @@ begin
   Result := FWavStartLevel xor Odd(FWavCursor);
 end;
 
+procedure TZXSpectrum48.SwitchJoystick;
+begin
+  if Joysticks.Count > 0 then
+    JoystickIndex := (JoystickIndex + 1) mod Joysticks.Count;
+end;
+
 procedure TZXSpectrum48.TapePlay;
 begin
   if not FWavLoaded or FTapePlaying then Exit;
@@ -1066,6 +1049,24 @@ begin
   end;
 
   FSaveArmed := True;
+end;
+
+function TZXSpectrum48.GetJoystick: TJoystick;
+begin
+  if Joysticks.Count > 0 then
+    Result := Joysticks[JoystickIndex];
+end;
+
+function TZXSpectrum48.GetJoystickName: String;
+begin
+  if not Assigned(Joystick) then
+    Result := 'None'
+  else if Joystick is TKempstonJoystick then
+    Result := 'Kempson'
+  else if Joystick is TCursorJoystick then
+    Result := 'Cursor'
+  else
+    Result := '?'; { Should not happen }
 end;
 
 procedure TZXSpectrum48.RecordMicEdge;

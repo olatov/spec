@@ -113,7 +113,6 @@ const
   INPUT_KEY_UP = 1;
   INPUT_KEY_DOWN = 2;
   TVTypeNames: array[0..2] of String = ('Colour', 'BW', 'Modern');
-  JoystickTypeNames: array[jtNone..jtCursor] of String = ('None', 'Kempston', 'Cursor');
 
 var
   { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_AUTOSAVE env
@@ -510,17 +509,24 @@ begin
       DrawRectangleRec(Dest, BLACK);
       DrawRectangleLinesEx(Dest, 1, RAYWHITE);
 
-      DrawText(PChar('CS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.CapsShiftKeys)) + ']'),
-        Trunc(Dest.x + (Dest.width * 0.012)), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
+      DrawText(
+        PChar('CAPS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.CapsShiftKeys)) + ']'),
+        Trunc(Dest.x + (Dest.width * 0.012)), Trunc(Dest.y + (Dest.height * 0.25)),
+        Trunc(Dest.height * 0.5), YELLOW);
 
-      DrawText(PChar('SS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
-        Trunc(Dest.x + (Dest.width * 0.512)), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
+      DrawText(
+        PChar('SYMB: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
+        Trunc(Dest.x + (Dest.width * 0.512)), Trunc(Dest.y + (Dest.height * 0.25)),
+        Trunc(Dest.height * 0.5), YELLOW);
     end;
 
     if not OSD.Text.IsEmpty then
       if GetTime < OSD.Lifetime then
+      begin
+        Dest.y := 10;
         DrawText(PAnsiChar(OSD.Text), Trunc(Dest.x) + 20, Trunc(Dest.y),
           GetScreenHeight div 12, ORANGE)
+      end
       else
         OSD.Text := '';
   EndDrawing;
@@ -557,12 +563,11 @@ begin
       Sender.Value := TVTypeNames[TVType];
     end);
 
-  Result.Root.AddItem('Joystick', JoystickTypeNames[Machine.Joystick.Type_],
+  Result.Root.AddItem('Joystick', Machine.JoystickName,
     procedure(Sender: TMenuItem)
     begin
-      Machine.Joystick.Type_ := if Machine.Joystick.Type_ <> High(TJoystickType)
-        then Succ(Machine.Joystick.Type_) else Low(TJoystickType);
-      Sender.Value := JoystickTypeNames[Machine.Joystick.Type_];
+      Machine.SwitchJoystick;
+      Sender.Value := Machine.JoystickName;
     end);
 
   Result.Root.AddItem('Fullscreen', BoolToStr(Fullscreen, 'yes', 'no'),
@@ -725,11 +730,8 @@ begin
 
   if IsKeyPressed(KEY_F6) then
   begin
-    Machine.Joystick.Type_ := if Machine.Joystick.Type_ <> High(TJoystickType)
-      then Succ(Machine.Joystick.Type_)
-      else Low(TJoystickType);
-
-    SetOSD($'Joystick: {JoystickTypeNames[Machine.Joystick.Type_]}');
+    Machine.SwitchJoystick;
+    SetOSD($'Joystick: {Machine.JoystickName}');
   end;
 
   if IsKeyPressed(KEY_F11) then Fullscreen := not Fullscreen;

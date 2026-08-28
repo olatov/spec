@@ -8,7 +8,7 @@ program Spec;
 {$endif}
 
 uses
-  Main, OSDMenu, Keyboards;
+  Main;
 
 begin
   with TApplication.Create(Nil) do

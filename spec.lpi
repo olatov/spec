@@ -113,6 +113,10 @@
         <Filename Value="keyboards.pas"/>
         <UnitName Value="Keyboards"/>
       </Unit>
+      <Unit>
+        <Filename Value="joysticks.pas"/>
+        <UnitName Value="Joysticks"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
