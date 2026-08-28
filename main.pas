@@ -15,12 +15,16 @@ type
     FFullscreen: Boolean;
     Config: TIniFile;
     FMuted: Boolean;
+    FTapeAutoLoad: Boolean;
+    FAutoLoad: record
+      Active: Boolean;
+      Frame: Integer;
+    end;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
     function GetPaused: Boolean;
-    procedure RunAutoLoadScript(Rel: Int64);
-    procedure RunAutoSaveScript(Rel: Int64);
     procedure SetMuted(AValue: Boolean);
+    procedure SetTapeAutoLoad(AValue: Boolean);
     procedure TapeSaved(const AFilename: String);
     function QuickLoad: Boolean;
     procedure QuickSave;
@@ -36,6 +40,7 @@ type
     function LoadFile(const AFilename: String; out AError: String): Boolean;
     procedure SetFullscreen(AValue: Boolean);
     procedure SetVolume(AVolume: Single; K: Single = 4);
+    function AutoLoadAction(Frame: Int64): Boolean;
   public
     Machine: TZXSpectrum48;
     AudioStream: TAudioStream;
@@ -47,6 +52,11 @@ type
     Image: TImage;
     Video: TTexture2D;
     Menu: TMenu;
+    { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_AUTOSAVE env
+      vars): scripts the LOAD or SAVE keystrokes via raylib automation events,
+      so tape loading and saving can be verified without a real keyboard or
+      window focus. }
+    AutoLoadFrame: Int64;
     SavePath: String;
     BrowsePath: String;   { folder the Load browser last showed }
     Shaders: array[0..2] of TShader;
@@ -58,11 +68,12 @@ type
     AttrTable: PAttrTable;
     Overscan: Integer;
     QuitRequested: Boolean;
+    BorderT: Integer;
+    property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
       down in real time, so it is filled in lazily: whenever the colour is
       about to change (and once at the end of the frame) everything the beam
       has covered since the last catch-up is painted in the outgoing colour. }
-    BorderT: Integer;
     procedure PaintBorderUntil(AT: Integer);
     procedure RunFrame;
     property Muted: Boolean read FMuted write SetMuted;
@@ -132,14 +143,9 @@ const
   LoadableExtensions: array[0..2] of String = ('.z80', '.tap', '.wav');
 
 var
-  { Test-automation support (opt-in via SPEC_AUTOLOAD / SPEC_AUTOSAVE env
-    vars): scripts the LOAD or SAVE keystrokes via raylib automation events,
-    so tape loading and saving can be verified without a real keyboard or
-    window focus. }
-  AutoLoadFrame: Int64 = -1;
   ScreenshotDir: String = '';
   PendingScreenshot: Boolean = False;
-  Snapshot: String = '';
+  TapeFile: String = '';
   AudioBuffer: array[0..SamplesPerFrame - 1] of CInt16;
   AudioStream: TAudioStream;
   OSD: record
@@ -202,20 +208,16 @@ var
   Names: TStringList;
   Filename: String;
 begin
-  Names := TStringList.Create;
+  Names := autofree TStringList.Create;
   try
-    try
-      for Filename in TDirectory.GetFiles(SaveDir, '*.z80') do
-        Names.Add(TPath.GetFileName(Filename));
-    except
-      { unreadable folder - the dialog simply lists nothing }
-    end;
-
-    Names.Sort;
-    Result := Names.ToStringArray;
-  finally
-    Names.Free;
+    for Filename in TDirectory.GetFiles(SaveDir, '*.z80') do
+      Names.Add(TPath.GetFileName(Filename));
+  except
+    { unreadable folder - the dialog simply lists nothing }
   end;
+
+  Names.Sort;
+  Result := Names.ToStringArray;
 end;
 
 { Turns what was typed into a bare '<name>.z80' inside SaveDir, or '' if there
@@ -228,14 +230,14 @@ begin
   if not Result.ToLower.EndsWith('.z80') then Result := Result + '.z80';
 end;
 
-{ The name the Save field opens on: the loaded snapshot's or tape's own name,
+{ The name the Save field opens on: the loaded TapeFile's or tape's own name,
   numbered up so a second save of the same game doesn't land on the first. }
 function TApplication.DefaultSaveName: String;
 var
   Base, Candidate: String;
   Suffix: Integer = 0;
 begin
-  Base := TPath.GetFileNameWithoutExtension(Snapshot);
+  Base := TPath.GetFileNameWithoutExtension(TapeFile);
   if Base.IsEmpty then Base := 'snapshot';
 
   Candidate := Base;
@@ -318,27 +320,23 @@ var
   Names: TStringList;
   Entry, Folder: String;
 begin
-  Names := TStringList.Create;
+  Names := autofree TStringList.Create;
   try
-    try
-      if ADirectories then
-        for Entry in TDirectory.GetDirectories(APath) do
-        begin
-          Folder := TPath.GetFileName(ExcludeTrailingPathDelimiter(Entry));
-          if not Folder.StartsWith('.') then Names.Add(Folder);   { no dot-folders }
-        end
-      else
-        for Entry in TDirectory.GetFiles(APath) do
-          if IsLoadable(Entry) then Names.Add(TPath.GetFileName(Entry));
-    except
-      { unreadable folder }
-    end;
-
-    Names.Sort;
-    Result := Names.ToStringArray;
-  finally
-    Names.Free;
+    if ADirectories then
+      for Entry in TDirectory.GetDirectories(APath) do
+      begin
+        Folder := TPath.GetFileName(ExcludeTrailingPathDelimiter(Entry));
+        if not Folder.StartsWith('.') then Names.Add(Folder);   { no dot-folders }
+      end
+    else
+      for Entry in TDirectory.GetFiles(APath) do
+        if IsLoadable(Entry) then Names.Add(TPath.GetFileName(Entry));
+  except
+    { unreadable folder }
   end;
+
+  Names.Sort;
+  Result := Names.ToStringArray;
 end;
 
 { Fills the browser page for the folder it is showing: the way up, then the
@@ -390,7 +388,7 @@ begin
   if Count = 0 then AItem.AddItem('(nothing to load here)');
 end;
 
-{ Opens whatever kind of file this is. A snapshot simply becomes the machine's
+{ Opens whatever kind of file this is. A TapeFile simply becomes the machine's
   state; a tape is inserted and the machine rewound to a bare BASIC prompt, so
   the scripted LOAD "" is typed into the ROM's editor and not into whatever
   happened to be running. }
@@ -439,17 +437,15 @@ begin
     Exit;
   end;
 
-  Snapshot := AFilename;   { the Save field takes its default name from here }
+  TapeFile := AFilename;   { the Save field takes its default name from here }
 
-  if Tape then
+  if Tape and TapeAutoLoad then
   begin
     Machine.Reset;
-    if Config.ReadBool('Tape', 'AutoLoad', True)
-      or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty then
-      AutoLoadFrame := 100;   { give the ROM time to finish booting to BASIC first }
+    FAutoLoad.Active := True;
+    FAutoLoad.Frame := 0;
   end;
 end;
-
 
 { Advances the audio-sample cursor to absolute T-state NewT, treating AudioPin as having
   held constant since the last call. Rather than snapshotting one instant per output sample
@@ -524,55 +520,24 @@ end;
   key is held for 5 frames with a 5-frame gap before the next, generous
   enough that the ROM's own keyboard debounce reliably registers it. Rel
   is frames since AutoLoadFrame. }
-procedure TApplication.RunAutoLoadScript(Rel: Int64);
+function TApplication.AutoLoadAction(Frame: Int64): Boolean;
 begin
-  case Rel of
-    0:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_J);
-    3:  AutoKeyEvent(INPUT_KEY_UP, KEY_J);
-    5:  AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
-    7:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
-    10: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    12: AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
-    22: AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
-    24: AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
-    27: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    29: AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
-    39: AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
-    42: AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
+  if Frame > 142 then Exit(False);
+  case Frame of
+    100: AutoKeyEvent(INPUT_KEY_DOWN, KEY_J);
+    103: AutoKeyEvent(INPUT_KEY_UP, KEY_J);
+    105: AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
+    107: AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
+    110: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
+    112: AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
+    122: AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
+    124: AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
+    127: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
+    129: AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
+    139: AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
+    142: AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
   end;
-end;
-
-{ Types "1 REM" ENTER to get a non-empty program, then SAVE "t" ENTER and the
-  keypress the ROM waits for. The name is not optional - SAVE "" is rejected -
-  and an empty program would save a degenerate zero-length data block. }
-procedure TApplication.RunAutoSaveScript(Rel: Int64);
-begin
-  case Rel of
-    0:   AutoKeyEvent(INPUT_KEY_DOWN, KEY_ONE);
-    3:   AutoKeyEvent(INPUT_KEY_UP, KEY_ONE);
-    8:   AutoKeyEvent(INPUT_KEY_DOWN, KEY_E);      { REM }
-    11:  AutoKeyEvent(INPUT_KEY_UP, KEY_E);
-    20:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
-    23:  AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
-
-    35:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_S);      { SAVE }
-    38:  AutoKeyEvent(INPUT_KEY_UP, KEY_S);
-    40:  AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
-    42:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
-    45:  AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    47:  AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
-    57:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_T);
-    60:  AutoKeyEvent(INPUT_KEY_UP, KEY_T);
-    70:  AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
-    72:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
-    75:  AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    77:  AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
-    87:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
-    90:  AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
-    { "Start tape, then press any key." }
-    120: AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
-    123: AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
-  end;
+  Result := True;
 end;
 
 procedure SetOSD(AText: String; ADuration: Double = 2);
@@ -585,7 +550,7 @@ constructor TApplication.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
   Machine := TZXSpectrum48.Create;
-  Config := TIniFile.Create(GetAppConfigFile(False, True));
+  Config := TIniFile.Create(GetAppConfigFile(False));
 end;
 
 destructor TApplication.Destroy;
@@ -690,6 +655,9 @@ begin
   Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
   Machine.OnTapeSaved := @TapeSaved;
 
+  TapeAutoLoad := Config.ReadBool('Tape', 'AutoLoad', True)
+    or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty;
+
   SavePath := Config.ReadString('Files', 'SavePath', '');
   BrowsePath := SaveDir;
 
@@ -742,6 +710,12 @@ begin
   begin
     RenderVideoFrame;
     RenderAudioFrame;
+
+    if FAutoLoad.Active then
+    begin
+      FAutoLoad.Frame := FAutoLoad.Frame + 1;
+      FAutoLoad.Active := AutoLoadAction(FAutoLoad.Frame);
+    end;
   end;
 
   UpdateTexture(Video, Image.data);
@@ -898,6 +872,13 @@ begin
       Sender.Value := BoolToStr(not Muted, 'yes', 'no');
     end);
 
+  Result.Root.AddItem('Auto-load tapes', BoolToStr(TapeAutoLoad, 'yes', 'no'),
+    procedure(Sender: TMenuItem)
+    begin
+      TapeAutoLoad := not TapeAutoLoad;
+      Sender.Value := BoolToStr(TapeAutoLoad, 'yes', 'no');
+    end);
+
   Result.Root.AddItem('Reset', '',
     procedure(Sender: TMenuItem)
     begin
@@ -928,6 +909,15 @@ begin
     PlayAudioStream(AudioStream);
 end;
 
+procedure TApplication.SetTapeAutoLoad(AValue: Boolean);
+begin
+  if FTapeAutoLoad = AValue then Exit;
+  FTapeAutoLoad := AValue;
+
+  { give the ROM time (100 frames = 2 sec) to finish booting to BASIC first }
+  AutoLoadFrame := if FTapeAutoLoad then 100 else -1;
+end;
+
 procedure TApplication.Run;
 var
   I: Integer;
@@ -935,18 +925,16 @@ var
 begin
   Machine.Power := True;
 
-  if GetEnvironmentVariable('SPEC_AUTOSAVE') <> '' then AutoLoadFrame := 100;
+  if ParamCount > 0 then TapeFile := ParamStr(1);
 
-  if ParamCount > 0 then Snapshot := ParamStr(1);
-
-  if not Snapshot.IsEmpty then
+  if not TapeFile.IsEmpty then
   begin
-    { A bare name on the command line means a snapshot. }
-    if TPath.GetExtension(Snapshot).IsEmpty then Snapshot := Snapshot + '.z80';
-    if not LoadFile(Snapshot, Error) then
+    { A bare name on the command line means a TapeFile. }
+    if TPath.GetExtension(TapeFile).IsEmpty then TapeFile := TapeFile + '.z80';
+    if not LoadFile(TapeFile, Error) then
     begin
-      SetOSD($'{TPath.GetFileName(Snapshot)}: {Error}', 5);
-      Snapshot := '';
+      SetOSD($'{TPath.GetFileName(TapeFile)}: {Error}', 5);
+      TapeFile := '';
     end;
   end;
 
@@ -1121,12 +1109,6 @@ end;
 
 procedure TApplication.RenderAudioFrame;
 begin
-  if AutoLoadFrame >= 0 then
-    if GetEnvironmentVariable('SPEC_AUTOSAVE') <> '' then
-      RunAutoSaveScript(Int64(Machine.Frames) - AutoLoadFrame)
-    else
-      RunAutoLoadScript(Int64(Machine.Frames) - AutoLoadFrame);
-
   AdvanceAudio(TStatesPerFrame);
   PrevTiming := 0;
   PrevT := 0;
@@ -1158,6 +1140,7 @@ begin
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
   Config.WriteBool('Audio', 'Muted', Muted);
+  Config.WriteBool('Tape', 'AutoLoad', TapeAutoLoad);
   Config.WriteBool('Tape', 'Sound', TapeSound);
   Config.WriteBool('Tape', 'Save', Machine.SaveToWav);
 
