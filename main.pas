@@ -136,7 +136,7 @@ const
     (it's internal to rcore.c) - these two values are its first two entries. }
   INPUT_KEY_UP = 1;
   INPUT_KEY_DOWN = 2;
-  TVTypeNames: array[0..2] of String = ('CRT', 'B/W CRT', 'Modern');
+  TVTypeNames: array[0..2] of String = ('Colour CRT', 'B/W CRT', 'Modern');
 
   { What the file browser offers and LoadFile knows how to open. Anything else
     is left out of the list rather than failing once it is picked. }
@@ -549,6 +549,10 @@ end;
 constructor TApplication.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
+
+  if not LoadLibrary then
+    raise Exception.CreateFmt('Failed to load %s', [DefaultZ80LibPath]);
+
   Machine := TZXSpectrum48.Create;
   Config := TIniFile.Create(GetAppConfigFile(False));
 end;
@@ -607,9 +611,6 @@ var
 begin
   SetTraceLogLevel(LOG_ERROR);
 
-  if not LoadLibrary then
-    raise Exception.CreateFmt('Failed to load %s', [DefaultZ80LibPath]);
-
   Palette := [
     GetColor($000000FF),
     GetColor($0000D8FF),
@@ -649,8 +650,8 @@ begin
 
   Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
 
-  TVType := Config.ReadInteger('Window', 'TVType', TVTypeColor) mod Length(Shaders);
-  Overscan := Config.ReadInteger('Window', 'Overscan', 16);
+  TVType := Config.ReadInteger('Display', 'TVType', TVTypeColor) mod Length(Shaders);
+  Overscan := Config.ReadInteger('Display', 'Overscan', 16);
   TapeSound := Config.ReadBool('Tape', 'Sound', True);
   Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
   Machine.OnTapeSaved := @TapeSaved;
@@ -1135,8 +1136,8 @@ begin
     Config.WriteInteger('Window', 'Height', GetScreenHeight);
   end;
 
-  Config.WriteInteger('Window', 'TVType', TVType);
-  Config.WriteInteger('Widnow', 'Overscan', Overscan);
+  Config.WriteInteger('Display', 'TVType', TVType);
+  Config.WriteInteger('Display', 'Overscan', Overscan);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
   Config.WriteBool('Audio', 'Muted', Muted);

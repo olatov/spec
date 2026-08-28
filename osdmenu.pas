@@ -410,6 +410,8 @@ begin
   Page := FCurrent;
   Page.HandleInput;
 
+  FCloseRequested := FCloseRequested or IsKeyPressed(KEY_F1);
+
   { Work the page put off while its own items were running - but not if one of
     them opened another page, or asked to leave. }
   if not FCloseRequested and (FCurrent = Page) then Page.AfterInput;

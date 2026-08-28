@@ -472,6 +472,8 @@ procedure TZXSpectrum48.Reset;
 begin
   FFrames := 0;
   FCycles := 0;
+  FOvershoot := 0;
+  FCurrentScanline := 0;
   FTotalTStates := 0;
   Move(ROMBytes, ROM, SizeOf(ROMBytes));
 
@@ -489,7 +491,7 @@ begin
   FTapePausedT := 0;
   FWavCursor := 0;
 
-  CPU.pc.word := 0;
+  z80_instant_reset(@CPU);
 end;
 
 procedure TZXSpectrum48.Wait(ACycles: Integer); inline;
