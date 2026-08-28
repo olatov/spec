@@ -511,10 +511,10 @@ begin
       DrawRectangleLinesEx(Dest, 1, RAYWHITE);
 
       DrawText(PChar('CS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.CapsShiftKeys)) + ']'),
-        Trunc(Dest.width * 0.012), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
+        Trunc(Dest.x + (Dest.width * 0.012)), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
 
       DrawText(PChar('SS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
-        Trunc(Dest.width * 0.512), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
+        Trunc(Dest.x + (Dest.width * 0.512)), Trunc(Dest.y + (Dest.height * 0.25)), Trunc(Dest.height * 0.5), YELLOW);
     end;
 
     if not OSD.Text.IsEmpty then
