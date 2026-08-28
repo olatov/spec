@@ -58,6 +58,8 @@ begin
     {$ifdef Darwin}
       KEY_LEFT_ALT: Result := 'Left OPT';
       KEY_RIGHT_ALT: Result := 'Right OPT';
+      KEY_LEFT_SUPER: Result := 'Left CMD';
+      KEY_RIGHT_SUPER: Result := 'Right CMD';
     {$else}
       KEY_LEFT_ALT: Result := 'Left ALT';
       KEY_RIGHT_ALT: Result := 'Right ALT';

@@ -83,8 +83,13 @@ begin
   RightKey := KEY_RIGHT;
   UpKey := KEY_UP;
   DownKey := KEY_DOWN;
-  Fire1Key := KEY_LEFT_ALT;
-  Fire2Key := KEY_RIGHT_ALT;
+  {$ifdef Darwin}
+    Fire1Key := KEY_LEFT_SUPER;
+    Fire2Key := KEY_RIGHT_SUPER;
+  {$else}
+    Fire1Key := KEY_LEFT_ALT;
+    Fire2Key := KEY_RIGHT_ALT;
+  {$endif}
 end;
 
 function TKempstonJoystick.Poll(APort: Word): Byte;
