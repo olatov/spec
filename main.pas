@@ -974,19 +974,19 @@ begin
   begin
     Menu.HandleInput;
     Exit;
-  end;
+  end
+  else if IsKeyPressed(KEY_ESCAPE) then QuitRequested := True;
 
-  if IsKeyPressed(KEY_ESCAPE) then
+  if IsKeyPressed(KEY_F1) then
   begin
     Menu := BuildMenu;
     Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
       begin
-        QuitRequested := QuitRequested or AQuit;
         FreeAndNil(Menu);
       end;
   end;
 
-  if IsKeyPressed(KEY_F1) then
+  if IsKeyPressed(KEY_F11) then
   begin
     ShowKeyboard := not ShowKeyboard;
     if ShowKeyboard then
@@ -1032,9 +1032,9 @@ begin
     SetOSD($'Joystick: {Machine.JoystickName}');
   end;
 
-  if IsKeyPressed(KEY_F11) then Fullscreen := not Fullscreen;
+  if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
 
-  if IsKeyPressed(KEY_F10) and Machine.WavLoaded then
+  if IsKeyPressed(KEY_F8) and Machine.WavLoaded then
   begin
     if Machine.TapePlaying then
     begin

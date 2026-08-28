@@ -1062,7 +1062,7 @@ begin
   if not Assigned(Joystick) then
     Result := 'None'
   else if Joystick is TKempstonJoystick then
-    Result := 'Kempson'
+    Result := 'Kempston'
   else if Joystick is TCursorJoystick then
     Result := 'Cursor'
   else
