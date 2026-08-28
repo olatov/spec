@@ -123,7 +123,7 @@ const
     (it's internal to rcore.c) - these two values are its first two entries. }
   INPUT_KEY_UP = 1;
   INPUT_KEY_DOWN = 2;
-  TVTypeNames: array[0..2] of String = ('Colour', 'BW', 'Modern');
+  TVTypeNames: array[0..2] of String = ('CRT', 'B/W CRT', 'Modern');
 
   { What the file browser offers and LoadFile knows how to open. Anything else
     is left out of the list rather than failing once it is picked. }
@@ -1009,21 +1009,23 @@ begin
   if IsKeyPressed(KEY_F3) and QuickLoad then
     SetOSD('Loaded');
 
-  if IsKeyPressed(KEY_F4) or IsKeyPressedRepeat(KEY_F4) then Dec(Overscan);
-  if IsKeyPressed(KEY_F5) or IsKeyPressedRepeat(KEY_F5) then Inc(Overscan);
-
   if IsKeyPressed(KEY_F7) or IsKeyPressed(KEY_F8) then
   begin
-    SetVolume(AudioVolume
-      - IfThen(IsKeyPressed(KEY_F7), 0.05, 0)
-      + IfThen(IsKeyPressed(KEY_F8), 0.05, 0));
-    SetOsd($'Volume: {AudioVolume * 100:%.0f}');
+    if IsKeyDown(KEY_LEFT_SHIFT) or IsKeyDown(KEY_LEFT_SHIFT) then
+    begin
+      Overscan := Overscan + IfThen(IsKeyPressed(KEY_F7), -1, 1);
+      SetOSD($'Overscan: {Overscan}');
+    end else
+    begin
+      SetVolume(AudioVolume + IfThen(IsKeyPressed(KEY_F7), -0.05, 0.05));
+      SetOsd($'Volume: {AudioVolume * 100:%.0f}');
+    end;
   end;
 
   if IsKeyPressed(KEY_F9) then
   begin
     TVType := (TVType + 1) mod Length(Shaders);
-    SetOSD($'TV type: {TVTypeNames[TVType]}');
+    SetOSD($'TV-set: {TVTypeNames[TVType]}');
   end;
 
   if IsKeyPressed(KEY_F6) then
@@ -1034,7 +1036,7 @@ begin
 
   if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
 
-  if IsKeyPressed(KEY_F8) and Machine.WavLoaded then
+  if IsKeyPressed(KEY_F5) and Machine.WavLoaded then
   begin
     if Machine.TapePlaying then
     begin
