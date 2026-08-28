@@ -549,11 +549,17 @@ begin
 end;
 
 constructor TApplication.Create(AOwner: TComponent);
+var
+  LibZ80Path: String;
 begin
   inherited Create(AOwner);
 
-  if not LoadLibrary then
-    raise Exception.CreateFmt('Failed to load %s', [DefaultZ80LibPath]);
+  LibZ80Path := GetEnvironmentVariable('LIBZ80_PATH');
+  if LibZ80Path.IsEmpty then
+    LibZ80Path := TPath.Combine('lib/', DefaultZ80LibPath);
+
+  if not Z80.LoadLibrary(LibZ80Path) then
+    raise Exception.CreateFmt('Failed to load %s', [LibZ80Path]);
 
   Machine := TZXSpectrum48.Create;
   Config := TIniFile.Create(GetAppConfigFile(False));
