@@ -11,11 +11,17 @@ uses
 type
   TKeyboard = class
   private
+    function GetBreakSpaceKey: TKeyboardKey;
+    function GetCapsShiftKey: TKeyboardKey;
     class function GetKeyName(AKey: TKeyboardKey): String; static;
+    function GetSymbolShiftKey: TKeyboardKey;
   public
     SymbolShiftKeys: TArray<TKeyboardKey>;
     CapsShiftKeys: TArray<TKeyboardKey>;
     BreakSpaceKeys: TArray<TKeyboardKey>;
+    property SymbolShiftKey: TKeyboardKey read GetSymbolShiftKey;
+    property CapsShiftKey: TKeyboardKey read GetCapsShiftKey;
+    property BreakSpaceKey: TKeyboardKey read GetBreakSpaceKey;
     class property KeyName[AKey: TKeyboardKey]: String read GetKeyName;
     class function GetKeyNames(AKeys: TArray<TKeyboardKey>): TStringArray;
     constructor Create;
@@ -23,6 +29,16 @@ type
   end;
 
 implementation
+
+function TKeyboard.GetBreakSpaceKey: TKeyboardKey;
+begin
+  Result := if Length(BreakSpaceKeys) > 0 then BreakSpaceKeys[0] else KEY_NULL;
+end;
+
+function TKeyboard.GetCapsShiftKey: TKeyboardKey;
+begin
+  Result := if Length(CapsShiftKeys) > 0 then CapsShiftKeys[0] else KEY_NULL;
+end;
 
 class function TKeyboard.GetKeyName(AKey: TKeyboardKey): String; static;
 begin
@@ -51,6 +67,11 @@ begin
   end;
 
   Result := Result.ToUpper;
+end;
+
+function TKeyboard.GetSymbolShiftKey: TKeyboardKey;
+begin
+  Result := if Length(SymbolShiftKeys) > 0 then SymbolShiftKeys[0] else KEY_NULL;
 end;
 
 class function TKeyboard.GetKeyNames(AKeys: TArray<TKeyboardKey>): TStringArray;

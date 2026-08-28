@@ -18,6 +18,8 @@ type
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
     function GetPaused: Boolean;
+    procedure RunAutoLoadScript(Rel: Int64);
+    procedure RunAutoSaveScript(Rel: Int64);
     procedure SetMuted(AValue: Boolean);
     procedure TapeSaved(const AFilename: String);
     function QuickLoad: Boolean;
@@ -522,19 +524,19 @@ end;
   key is held for 5 frames with a 5-frame gap before the next, generous
   enough that the ROM's own keyboard debounce reliably registers it. Rel
   is frames since AutoLoadFrame. }
-procedure RunAutoLoadScript(Rel: Int64);
+procedure TApplication.RunAutoLoadScript(Rel: Int64);
 begin
   case Rel of
     0:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_J);
     3:  AutoKeyEvent(INPUT_KEY_UP, KEY_J);
-    5:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    5:  AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
     7:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
     10: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    12: AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
-    22: AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    12: AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
+    22: AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
     24: AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
     27: AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    29: AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
+    29: AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
     39: AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
     42: AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
   end;
@@ -543,7 +545,7 @@ end;
 { Types "1 REM" ENTER to get a non-empty program, then SAVE "t" ENTER and the
   keypress the ROM waits for. The name is not optional - SAVE "" is rejected -
   and an empty program would save a degenerate zero-length data block. }
-procedure RunAutoSaveScript(Rel: Int64);
+procedure TApplication.RunAutoSaveScript(Rel: Int64);
 begin
   case Rel of
     0:   AutoKeyEvent(INPUT_KEY_DOWN, KEY_ONE);
@@ -555,16 +557,16 @@ begin
 
     35:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_S);      { SAVE }
     38:  AutoKeyEvent(INPUT_KEY_UP, KEY_S);
-    40:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    40:  AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
     42:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
     45:  AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    47:  AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
+    47:  AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
     57:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_T);
     60:  AutoKeyEvent(INPUT_KEY_UP, KEY_T);
-    70:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_LEFT_CONTROL);
+    70:  AutoKeyEvent(INPUT_KEY_DOWN, Machine.Keyboard.SymbolShiftKey);
     72:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_P);
     75:  AutoKeyEvent(INPUT_KEY_UP, KEY_P);
-    77:  AutoKeyEvent(INPUT_KEY_UP, KEY_LEFT_CONTROL);
+    77:  AutoKeyEvent(INPUT_KEY_UP, Machine.Keyboard.SymbolShiftKey);
     87:  AutoKeyEvent(INPUT_KEY_DOWN, KEY_ENTER);
     90:  AutoKeyEvent(INPUT_KEY_UP, KEY_ENTER);
     { "Start tape, then press any key." }
