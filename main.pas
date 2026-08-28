@@ -731,6 +731,8 @@ end;
 procedure TApplication.RunFrame;
 var
   Dest: TRectangle;
+  S: String;
+  Key: TKeyboardKey;
 begin
   HandleInput;
 
@@ -795,8 +797,23 @@ begin
         Trunc(Dest.height * 0.5), YELLOW);
 
       DrawText(
-        PChar('SYMB: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
+        PChar('SYMB: [' + String.Join('] [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
         Trunc(Dest.x + (Dest.width * 0.512)), Trunc(Dest.y + (Dest.height * 0.25)),
+        Trunc(Dest.height * 0.5), YELLOW);
+
+      Dest.y := Dest.y + Dest.height;
+      DrawRectangleRec(Dest, BLACK);
+      DrawRectangleLinesEx(Dest, 1, RAYWHITE);
+
+      S := '';
+      if Assigned(Machine.Joystick) then
+        for Key in Machine.Joystick.Keys do
+          if Key <> KEY_NULL then
+            S := S + $' [{TKeyboard.KeyName[Key]}]';
+
+      DrawText(
+        PChar('Joystick: ' + Machine.JoystickName + S),
+        Trunc(Dest.x + (Dest.width * 0.012)), Trunc(Dest.y + (Dest.height * 0.25)),
         Trunc(Dest.height * 0.5), YELLOW);
     end;
 
@@ -964,8 +981,8 @@ begin
     Menu := BuildMenu;
     Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
       begin
-        FreeAndNil(Menu);
         QuitRequested := QuitRequested or AQuit;
+        FreeAndNil(Menu);
       end;
   end;
 

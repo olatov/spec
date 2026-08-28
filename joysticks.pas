@@ -14,6 +14,7 @@ type
     function GetDown: Boolean;
     function GetFire1: Boolean;
     function GetFire2: Boolean;
+    function GetKeys: TArray<TKeyboardKey>;
     function GetLeft: Boolean;
     function GetRight: Boolean;
     function GetUp: Boolean;
@@ -27,6 +28,7 @@ type
     property Down: Boolean read GetDown;
     property Fire1: Boolean read GetFire1;
     property Fire2: Boolean read GetFire2;
+    property Keys: TArray<TKeyboardKey> read GetKeys;
   end;
 
   TKempstonJoystick = class(TJoystick)
@@ -35,6 +37,7 @@ type
 
   TCursorJoystick = class(TJoystick)
     function Poll(APort: Word): Byte; override;
+    constructor Create; override;
   end;
 
 implementation
@@ -52,6 +55,11 @@ end;
 function TJoystick.GetFire2: Boolean;
 begin
   Result := IsKeyDown(Fire2Key);
+end;
+
+function TJoystick.GetKeys: TArray<TKeyboardKey>;
+begin
+  Result := [LeftKey, RightKey, UpKey, DownKey, Fire1Key, Fire2Key];
 end;
 
 function TJoystick.GetLeft: Boolean;
@@ -108,6 +116,12 @@ begin
     Result.Bits[4] := Result.Bits[4] or Left;
 
   Result := not Result;
+end;
+
+constructor TCursorJoystick.Create;
+begin
+  inherited Create;
+  Fire2Key := KEY_NULL;
 end;
 
 end.

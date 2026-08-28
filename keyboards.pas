@@ -9,17 +9,15 @@ uses
   Raylib;
 
 type
-  TKeyArray = array of TKeyboardKey;
-
   TKeyboard = class
   private
     class function GetKeyName(AKey: TKeyboardKey): String; static;
   public
-    SymbolShiftKeys: TKeyArray;
-    CapsShiftKeys: TKeyArray;
-    BreakSpaceKeys: TKeyArray;
+    SymbolShiftKeys: TArray<TKeyboardKey>;
+    CapsShiftKeys: TArray<TKeyboardKey>;
+    BreakSpaceKeys: TArray<TKeyboardKey>;
     class property KeyName[AKey: TKeyboardKey]: String read GetKeyName;
-    class function GetKeyNames(AKeys: TKeyArray): TStringArray;
+    class function GetKeyNames(AKeys: TArray<TKeyboardKey>): TStringArray;
     constructor Create;
     function Poll(APort: Word): Byte;
   end;
@@ -55,7 +53,7 @@ begin
   Result := Result.ToUpper;
 end;
 
-class function TKeyboard.GetKeyNames(AKeys: TKeyArray): TStringArray;
+class function TKeyboard.GetKeyNames(AKeys: TArray<TKeyboardKey>): TStringArray;
 var
   I: Integer;
 begin
