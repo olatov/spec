@@ -41,8 +41,13 @@ begin
     KEY_RIGHT_SHIFT: Result := 'Right SHIFT';
     KEY_LEFT_CONTROL: Result := 'Left CTRL';
     KEY_RIGHT_CONTROL: Result := 'Right CTRL';
-    KEY_LEFT_ALT: Result := 'Left ALT';
-    KEY_RIGHT_ALT: Result := 'Right ALTL';
+    {$ifdef Darwin}
+      KEY_LEFT_ALT: Result := 'Left OPT';
+      KEY_RIGHT_ALT: Result := 'Right OPT';
+    {$else}
+      KEY_LEFT_ALT: Result := 'Left ALT';
+      KEY_RIGHT_ALT: Result := 'Right ALT';
+    {$endif}
   else
     Result := Raylib.GetKeyName(AKey);
   end;
@@ -62,7 +67,12 @@ end;
 constructor TKeyboard.Create;
 begin
   CapsShiftKeys := [KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT];
-  SymbolShiftKeys := [KEY_RIGHT_CONTROL, KEY_LEFT_CONTROL];
+  SymbolShiftKeys :=
+    {$ifdef Darwin}
+      [KEY_RIGHT_ALT, KEY_LEFT_ALT];
+    {$else}
+      [KEY_RIGHT_CONTROL, KEY_LEFT_CONTROL];
+    {$endif}
   BreakSpaceKeys := [KEY_SPACE];
 end;
 
