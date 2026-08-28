@@ -69,6 +69,7 @@ end;
 function TKeyboard.Poll(APort: Word): Byte;
 var
   Data: Integer;
+  Key: TKeyboardKey;
 begin
   if APort.Bits[0] then Exit($FF);
 
@@ -78,9 +79,10 @@ begin
   if not APort.Bits[8] then
   begin
     { $FEFE }
-    Data.Bits[0] := IsKeyDown(KEY_LEFT_SHIFT)
-      or IsKeyDown(KEY_RIGHT_SHIFT)
-      or IsKeyDown(KEY_BACKSPACE);
+    for Key in CapsShiftKeys do
+      Data.Bits[0] := Data.Bits[0] or IsKeyDown(Key);
+
+    Data.Bits[0] := Data.Bits[0] or IsKeyDown(KEY_BACKSPACE);
     Data.Bits[1] := IsKeyDown(KEY_Z);
     Data.Bits[2] := IsKeyDown(KEY_X);
     Data.Bits[3] := IsKeyDown(KEY_C);
@@ -176,11 +178,14 @@ begin
   begin
     { $7FFE }
     Data.Bits[0] := IsKeyDown(KEY_SPACE);
-    Data.Bits[1] := IsKeyDown(KEY_LEFT_CONTROL)
-      or IsKeyDown(KEY_RIGHT_CONTROL)
-      or IsKeyDown(KEY_KP_ADD)
+
+    Data.Bits[1] := IsKeyDown(KEY_KP_ADD)
       or IsKeyDown(KEY_MINUS)
       or IsKeyDown(KEY_EQUAL);
+
+    for Key in SymbolShiftKeys do
+      Data.Bits[1] := Data.Bits[1] or IsKeyDown(Key);
+
     Data.Bits[2] := IsKeyDown(KEY_M);
     Data.Bits[3] := IsKeyDown(KEY_N);
     Data.Bits[4] := IsKeyDown(KEY_B);
