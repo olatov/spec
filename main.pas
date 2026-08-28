@@ -46,6 +46,7 @@ type
     AudioStream: TAudioStream;
     AudioVolume: Single;
     Target: TRenderTexture2D;
+    Font: TFont;
     KBTexture: TTexture2D;
     ShowKeyboard: Boolean;
     ShowMenu: Boolean;
@@ -162,6 +163,7 @@ var
   {$embedstr ShaderTextColor 'shaders/shader_color.fs'}
   {$embedstr ShaderTextBW 'shaders/shader_bw.fs'}
   {$embedstr ShaderTextModern 'shaders/shader_modern.fs'}
+  {$embedbytes FontData 'fonts/Fake Receipt.otf'}
   {$embedbytes KBLayout 'images/keyboard.png'}
 
 implementation
@@ -569,6 +571,8 @@ begin
   UnloadAudioStream(AudioStream);
   CloseAudioDevice;
 
+  UnloadFont(Font);
+
   for I := 0 to High(Shaders) do
     UnloadShader(Shaders[I]);
   UnloadRenderTexture(Target);
@@ -608,6 +612,7 @@ var
   I: Integer;
   LinesCount: Single = 256;
   Curvature: Single = 7.0;
+  Stream: TResourceStream;
 begin
   SetTraceLogLevel(LOG_ERROR);
 
@@ -649,6 +654,8 @@ begin
   ClearWindowState(FLAG_VSYNC_HINT);
 
   Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
+
+  Font := LoadFontFromMemory('.otf', FontData, SizeOf(FontData), 24, Nil, 0);
 
   TVType := Config.ReadInteger('Display', 'TVType', TVTypeColor) mod Length(Shaders);
   Overscan := Config.ReadInteger('Display', 'Overscan', 16);
@@ -768,15 +775,15 @@ begin
       DrawRectangleRec(Dest, BLACK);
       DrawRectangleLinesEx(Dest, 1, RAYWHITE);
 
-      DrawText(
+      DrawTextEx(Font,
         PChar('CAPS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.CapsShiftKeys)) + ']'),
-        Trunc(Dest.x + (Dest.width * 0.012)), Trunc(Dest.y + (Dest.height * 0.25)),
-        Trunc(Dest.height * 0.5), YELLOW);
+        [Dest.x + (Dest.width * 0.012), Dest.y + (Dest.height * 0.25)],
+        Trunc(Dest.height * 0.5), 0, YELLOW);
 
-      DrawText(
+      DrawTextEx(Font,
         PChar('SYMB: [' + String.Join('] [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
-        Trunc(Dest.x + (Dest.width * 0.512)), Trunc(Dest.y + (Dest.height * 0.25)),
-        Trunc(Dest.height * 0.5), YELLOW);
+        [Dest.x + (Dest.width * 0.512), Dest.y + (Dest.height * 0.25)],
+        Trunc(Dest.height * 0.5), 0, YELLOW);
 
       Dest.y := Dest.y + Dest.height;
       DrawRectangleRec(Dest, BLACK);
@@ -788,18 +795,22 @@ begin
           if Key <> KEY_NULL then
             S := S + $' [{TKeyboard.KeyName[Key]}]';
 
-      DrawText(
+      DrawTextEx(Font,
         PChar('Joystick: ' + Machine.JoystickName + S),
-        Trunc(Dest.x + (Dest.width * 0.012)), Trunc(Dest.y + (Dest.height * 0.25)),
-        Trunc(Dest.height * 0.5), YELLOW);
+        [Dest.x + (Dest.width * 0.012), Dest.y + (Dest.height * 0.25)],
+        Trunc(Dest.height * 0.5), 0, YELLOW);
     end;
 
     if not OSD.Text.IsEmpty then
       if GetTime < OSD.Lifetime then
       begin
-        Dest.y := 10;
-        DrawText(PAnsiChar(OSD.Text), Trunc(Dest.x) + 20, Trunc(Dest.y),
-          GetScreenHeight div 12, ORANGE)
+        DrawRectangle(Trunc(Dest.x), Trunc(Dest.y),
+          Trunc(Dest.width), Trunc(Dest.height * 0.1),
+          ColorAlpha(DARKMAGENTA, 0.67));
+        DrawTextEx(Font,
+        PAnsiChar(OSD.Text),
+          [Dest.x + 20, Dest.y + 8],
+          Trunc(Dest.height * 0.08), 0, ORANGE)
       end
       else
         OSD.Text := '';
@@ -810,7 +821,7 @@ function TApplication.BuildMenu: TMenu;
 var
   SaveItem: TEditMenuItem;
 begin
-  Result := TMenu.Create(Self);
+  Result := TMenu.Create(Self, Font);
 
   Result.Root.AddItem('Resume', '',
     procedure(Sender: TMenuItem)

@@ -28,6 +28,7 @@ type
     function GetMenu: TMenu; virtual;
     function GetSelectedItem: TMenuItem;
   public
+    Font: TFont;
     Text: String;
     Value: String;         { shown after the text, for settings and defaults }
     Data: String;          { the owner's payload - never drawn }
@@ -113,10 +114,12 @@ type
     FQuitRequested: Boolean;
     function GetTexture: TTexture2D;
   public
+    Font: TFont;
     Root: TRootMenuItem;
     OnClose: TMenuNotify;
     procedure HandleInput;
     constructor Create(AOwner: TComponent); override;
+    constructor Create(AOwner: TComponent; AFont: TFont);
     destructor Destroy; override;
     { Both are deferred to the end of HandleInput: the owner frees the menu
       from OnClose, so nothing may run inside an item afterwards. }
@@ -150,6 +153,7 @@ end;
 function TMenuItem.AddItem(AText: String; AValue: String; AOnApply: TMenuItemNotify = Nil): TMenuItem;
 begin
   Result := TMenuItem.Create(Self);
+  Result.Font := Font;
   Result.Text := AText;
   Result.Value := AValue;
   Result.OnApply := AOnApply;
@@ -159,6 +163,7 @@ end;
 function TMenuItem.AddEdit(AText: String; APrompt: String; AOnAccept: TMenuEditNotify): TEditMenuItem;
 begin
   Result := TEditMenuItem.Create(Self);
+  Result.Font := Font;
   Result.Text := AText;
   Result.Prompt := APrompt;
   Result.OnAccept := AOnAccept;
@@ -168,6 +173,7 @@ end;
 function TMenuItem.AddBrowser(AText: String; APath: String; AOnBrowse: TMenuBrowseNotify): TFileMenuItem;
 begin
   Result := TFileMenuItem.Create(Self);
+  Result.Font := Font;
   Result.Text := AText;
   Result.Path := APath;
   Result.OnBrowse := AOnBrowse;
@@ -219,17 +225,19 @@ begin
     if not Item.Value.IsEmpty then
       Line := Line + ': ' + Item.Value;
 
-    DrawText(PChar(Line), MenuLeft, ATop + ((I - First) * MenuLineHeight), 24,
-      if Item = SelectedItem then YELLOW else ORANGE);
+    DrawTextEx(Font, PChar(Line), [MenuLeft, ATop + ((I - First) * MenuLineHeight)],
+      24, 0, if Item = SelectedItem then YELLOW else ORANGE);
   end;
 
   if Items.Count > MenuVisibleItems then
-    DrawText(PChar($'{SelectedIndex + 1}/{Items.Count}'), 560, ATop, 20, SKYBLUE);
+    DrawTextEx(Font,
+      PChar($'{SelectedIndex + 1}/{Items.Count}'),
+      [560, ATop], 20, 0, SKYBLUE);
 end;
 
 function TMenuItem.Footer: String;
 begin
-  Result := if Assigned(Parent) then 'ESC - Back' else 'ESC again - Quit';
+  Result := if Assigned(Parent) then 'ESC - Back' else 'ESC again - Close';
 end;
 
 procedure TMenuItem.Next;
@@ -325,17 +333,19 @@ var
   I: Integer;
   Caret: String;
 begin
-  DrawText(PChar(Prompt), MenuLeft, ATop, 24, ORANGE);
+  DrawTextEx(Font, PChar(Prompt), [MenuLeft, ATop], 24, 0, ORANGE);
 
   DrawRectangleLines(MenuLeft, ATop + 34, 592, 46, AQUA);
   Caret := if Frac(GetTime * 2) < 0.5 then '_' else '';
-  DrawText(PChar(Value + Caret), MenuLeft + 12, ATop + 46, 28, YELLOW);
+  DrawTextEx(Font, PChar(Value + Caret),
+    [MenuLeft + 12, ATop + 46], 28, 0, YELLOW);
 
   if not Warning.IsEmpty then
-    DrawText(PChar(Warning), MenuLeft, ATop + 92, 20, RED);
+    DrawTextEx(Font, PChar(Warning), [MenuLeft, ATop + 92], 20, 0, RED);
 
   for I := 0 to High(Notes) do
-    DrawText(PChar(Notes[I]), MenuLeft, ATop + 124 + (I * 26), 20, SKYBLUE);
+    DrawTextEx(Font, PChar(Notes[I]),
+      [MenuLeft, ATop + 124 + (I * 26)], 20, 0, SKYBLUE);
 end;
 
 function TEditMenuItem.Footer: String;
@@ -384,10 +394,10 @@ begin
   Shown := Path;
   if Length(Shown) > PathLimit then
     Shown := '...' + Shown.Substring(Length(Shown) - PathLimit);
-  DrawText(PChar(Shown), MenuLeft, ATop, 20, SKYBLUE);
+  DrawTextEx(Font, PChar(Shown), [MenuLeft, ATop], 20, 0, SKYBLUE);
 
   if not Warning.IsEmpty then
-    DrawText(PChar(Warning), MenuLeft, ATop + 24, 20, RED);
+    DrawTextEx(Font, PChar(Warning), [MenuLeft, ATop + 24], 20, 0, RED);
 
   inherited Render(ATop + 52);
 end;
@@ -422,16 +432,24 @@ begin
   if FCloseRequested and Assigned(OnClose) then OnClose(Self, FQuitRequested);
 end;
 
+constructor TMenu.Create(AOwner: TComponent);
+begin
+  Create(AOwner, GetFontDefault);
+end;
+
 function TMenu.GetTexture: TTexture2D;
 begin
   Result := FTarget.texture;
 end;
 
-constructor TMenu.Create(AOwner: TComponent);
+constructor TMenu.Create(AOwner: TComponent; AFont: TFont);
 begin
   inherited Create(AOwner);
+  Font := AFont;
   Root := TRootMenuItem.Create(Self);
+  Root.Font := AFont;
   FCurrent := Root;
+
 
   FTarget := LoadRenderTexture(640, 480);
   SetTextureFilter(FTarget.texture, TEXTURE_FILTER_BILINEAR);
@@ -470,15 +488,18 @@ procedure TMenu.Render;
 begin
   BeginTextureMode(FTarget);
 
-  ClearBackground(NAVY);
+  ClearBackground(BLACK);
 
-  DrawText(PChar(if FCurrent = Root
+  DrawRectangle(0, 0, 640, 48, MAROON);
+
+  DrawTextEx(Font, PChar(if FCurrent = Root
     then '>> SPEC <<'
-    else '>> ' + FCurrent.Text.ToUpper + ' <<'), MenuLeft, 6, 36, AQUA);
+    else '>> ' + FCurrent.Text.ToUpper + ' <<'), [MenuLeft, 6], 36, 0, GOLD);
 
   FCurrent.Render(64);
 
-  DrawText(PChar(FCurrent.Footer), MenuLeft, 440, 20, YELLOW);
+  DrawRectangle(0, 480 - 48, 640, 36, DARKBLUE);
+  DrawTextEx(Font, PChar(FCurrent.Footer), [MenuLeft, 440], 20, 0, YELLOW);
 
   EndTextureMode;
 end;
