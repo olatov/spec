@@ -196,6 +196,7 @@ implementation
 
 procedure SetOSD(AText: String; ADuration: Double = 2); forward;
 
+{$ifdef DEBUG_AUDIO}
 { ---------------------------------------------------------------------------
   Audio pacing instrumentation. Off unless SPEC_AUDIO_STATS=1 is set in the
   environment, at which point a summary lands on stdout once a second.
@@ -460,6 +461,8 @@ begin
 
   if AFrameDone >= Stats.NextReport then StatsReport;
 end;
+{$endif DEBUG_AUDIO}
+
 procedure TApplication.SetFullscreen(AValue: Boolean);
 begin
   if FFullscreen = AValue then Exit;
@@ -872,7 +875,9 @@ begin
 
   FreeAndNil(Machine);
 
-  StatsShutdown;
+  {$ifdef DEBUG_AUDIO}
+    StatsShutdown;
+  {$endif}
   if IsAudioStreamValid(AudioStream) then UnloadAudioStream(AudioStream);
   if IsAudioDeviceReady then CloseAudioDevice;
 
@@ -1005,7 +1010,9 @@ begin
   SetVolume(Config.ReadFloat('Audio', 'Volume', 0.4));
   Muted := Config.ReadBool('Audio', 'Muted', False);
 
-  StatsInit;
+  {$ifdef DEBUG_AUDIO}
+    StatsInit;
+  {$endif}
 end;
 
 procedure TApplication.SetVolume(AVolume: Single; K: Single = 4);
@@ -1133,7 +1140,9 @@ begin
         OSD.Text := '';
   EndDrawing;
 
-  StatsFrame(Started, EmuDone, BlitDone, GetTime, Idle);
+  {$ifdef DEBUG_AUDIO}
+    StatsFrame(Started, EmuDone, BlitDone, GetTime, Idle);
+  {$endif}
 end;
 
 function TApplication.BuildMenu: TMenu;
@@ -1467,8 +1476,11 @@ end;
 
 procedure TApplication.RenderAudioFrame;
 var
-  Accepted, Starved: Boolean;
-  Started, Updated: Double;
+  Accepted: Boolean;
+  {$ifdef DEBUG_AUDIO}
+    Starved: Boolean;
+    Started, Updated: Double;
+  {$endif}
 begin
   AdvanceAudio(TStatesPerFrame);
   PrevTiming := 0;
@@ -1481,24 +1493,28 @@ begin
   Inc(AccumPos, SamplesPerFrame);
   if AccumPos >= AudioChunkFrames then
   begin
-    { A chunk the stream is too busy to take is dropped on the floor, silently
-      losing AudioChunkFrames' worth of audio - the instrumentation counts
-      those, since each one is a discontinuity the speaker reproduces as a
-      click. Timing the handoff itself catches the other case, where the call
-      blocks behind the device thread. }
-    Started := GetTime;
+    {$ifdef DEBUG_AUDIO}
+      { A chunk the stream is too busy to take is dropped on the floor, silently
+        losing AudioChunkFrames' worth of audio - the instrumentation counts
+        those, since each one is a discontinuity the speaker reproduces as a
+        click. Timing the handoff itself catches the other case, where the call
+        blocks behind the device thread. }
+      Started := GetTime;
+      {$endif}
     Accepted := IsAudioStreamProcessed(AudioStream);
     if Accepted then
       UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
-    Updated := GetTime;
+    {$ifdef DEBUG_AUDIO}
+      Updated := GetTime;
 
-    { The stream holds two sub-buffers. One having just been filled, a stream
-      that still reports a processed sub-buffer has the other one free as well
-      - the device had already drained everything and played silence into the
-      gap. That is the underrun case, which the drop count above cannot see. }
-    Starved := Accepted and IsAudioStreamProcessed(AudioStream);
+      { The stream holds two sub-buffers. One having just been filled, a stream
+        that still reports a processed sub-buffer has the other one free as well
+        - the device had already drained everything and played silence into the
+        gap. That is the underrun case, which the drop count above cannot see. }
+      Starved := Accepted and IsAudioStreamProcessed(AudioStream);
 
-    StatsChunk(Accepted, Starved, (Updated - Started) * 1000);
+      StatsChunk(Accepted, Starved, (Updated - Started) * 1000);
+    {$endif}
     AccumPos := 0;
   end;
 end;
