@@ -7,6 +7,7 @@ interface
 uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
+  {$ifdef USE_SDL3_DELAY} Utils, {$endif}
   Z80, Spectrum, OSDMenu, Keyboards;
 
 type
@@ -169,6 +170,271 @@ var
 implementation
 
 procedure SetOSD(AText: String; ADuration: Double = 2); forward;
+
+{ ---------------------------------------------------------------------------
+  Audio pacing instrumentation. Off unless SPEC_AUDIO_STATS=1 is set in the
+  environment, at which point a summary lands on stdout once a second.
+
+  The sample producer (RenderAudioFrame, paced by the 50 fps loop off the
+  system clock) and the audio device (paced by its own clock) run open loop
+  with only two chunks of buffer between them and no feedback. Either side
+  slipping is audible as a click: too fast and RenderAudioFrame discards a
+  whole chunk because the stream is still busy, too slow and the device runs
+  out and raylib pads with silence. These counters say which is happening,
+  and whether the cause is a steady drift or a one-off scheduling spike. }
+
+type
+  TStatsSegment = record
+    Sum, Peak: Double;
+  end;
+
+const
+  StatsInterval = 1.0;   { seconds between summary lines }
+
+  { Rates a device plausibly runs at. The mixed-output probe below counts
+    frames in the device's own rate, not ours, so the measured consume rate is
+    snapped to one of these to express drift as a fraction of real time. }
+  StatsRates: array[0..3] of Integer = (44100, 48000, 88200, 96000);
+
+var
+  Stats: record
+    Enabled: Boolean;
+    Start, NextReport: Double;
+
+    { main thread }
+    LastFrame, LastPush: Double;
+    ChunksPushed, ChunksDropped, ChunksStarved: Int64;
+    GapMin, GapPeak, GapSum, UpdatePeak: Double;
+    GapCount, Frames, IdleFrames: Integer;
+    Period, Emu, Blit, Present: TStatsSegment;
+
+    { audio thread. Single writer, read from the main thread without
+      synchronisation: an aligned 64-bit counter cannot tear on either target,
+      and losing the odd extreme to a torn reset costs nothing here. }
+    FramesConsumed: Int64;
+    BlockMin, BlockPeak: LongWord;
+    LastCallback, CallbackGapPeak: Double;
+
+    { Interval baselines. Rates are computed over the last interval only, so
+      they are not skewed by the chunks primed into the stream at startup, and
+      each rate is measured between its own events rather than over the report
+      window - counting whole 100 ms chunks against a ~1 s window quantises the
+      producer rate to 10%, which swamps the drift being looked for. }
+    MarkTime, MarkConsumedAt: Double;
+    MarkPushed, MarkDropped, MarkStarved, MarkConsumed: Int64;
+  end;
+
+{ Runs on the audio device thread, on every device callback, whether or not
+  anything is playing. Stays allocation- and lock-free: it only reads the
+  clock and bumps counters. }
+procedure AudioStatsProbe(ABuffer: Pointer; AFrames: LongWord); cdecl;
+var
+  Now: Double;
+begin
+  Now := GetTime;
+  if (Stats.LastCallback > 0) and (Now - Stats.LastCallback > Stats.CallbackGapPeak) then
+    Stats.CallbackGapPeak := Now - Stats.LastCallback;
+  Stats.LastCallback := Now;
+
+  if AFrames < Stats.BlockMin then Stats.BlockMin := AFrames;
+  if AFrames > Stats.BlockPeak then Stats.BlockPeak := AFrames;
+
+  { Written last, so a main thread that has already read LastCallback and then
+    sees this unchanged knows the pair it holds is consistent. }
+  Inc(Stats.FramesConsumed, AFrames);
+end;
+
+{ Reads the (frame count, timestamp) pair the probe maintains without stopping
+  it, retrying while a callback lands in the middle. The callbacks are 10 ms
+  apart, so this effectively never spins. }
+procedure StatsReadConsumed(out AFrames: Int64; out AAt: Double);
+var
+  Before: Int64;
+  I: Integer;
+begin
+  for I := 1 to 8 do
+  begin
+    Before := Stats.FramesConsumed;
+    AAt := Stats.LastCallback;
+    AFrames := Stats.FramesConsumed;
+    if AFrames = Before then Exit;
+  end;
+end;
+
+procedure StatsAdd(var ASegment: TStatsSegment; AMilliseconds: Double); inline;
+begin
+  ASegment.Sum := ASegment.Sum + AMilliseconds;
+  if AMilliseconds > ASegment.Peak then ASegment.Peak := AMilliseconds;
+end;
+
+function StatsMean(const ASegment: TStatsSegment): Double; inline;
+begin
+  Result := ASegment.Sum / Max(Stats.Frames, 1);
+end;
+
+function StatsNearestRate(AMeasured: Double): Integer;
+var
+  I: Integer;
+begin
+  Result := StatsRates[0];
+  for I := 1 to High(StatsRates) do
+    if Abs(AMeasured - StatsRates[I]) < Abs(AMeasured - Result) then
+      Result := StatsRates[I];
+end;
+
+procedure StatsInit;
+begin
+  Stats.Enabled := GetEnvironmentVariable('SPEC_AUDIO_STATS') = '1';
+  if not Stats.Enabled then Exit;
+
+  Stats.Start := GetTime;
+  Stats.MarkTime := Stats.Start;
+  Stats.NextReport := Stats.Start + StatsInterval;
+  Stats.GapMin := Infinity;
+  Stats.BlockMin := High(LongWord);
+
+  AttachAudioMixedProcessor(@AudioStatsProbe);
+
+  Writeln($'[audio] {AudioFrequency} Hz, chunk {AudioChunkFrames} frames ' +
+    $'({AudioChunkFrames * 1000 / AudioFrequency:%.1f} ms), target {FPS} fps ' +
+    $'({SamplesPerFrame} frames/video frame)');
+  Flush(Output);
+end;
+
+procedure StatsShutdown;
+begin
+  if not Stats.Enabled then Exit;
+  Stats.Enabled := False;
+  DetachAudioMixedProcessor(@AudioStatsProbe);
+end;
+
+{ Called once per completed chunk, whether or not the stream accepted it. }
+procedure StatsChunk(AAccepted, AStarved: Boolean; AUpdateMilliseconds: Double);
+var
+  Now, Gap: Double;
+begin
+  if not Stats.Enabled then Exit;
+
+  Now := GetTime;
+  if Stats.LastPush > 0 then
+  begin
+    Gap := (Now - Stats.LastPush) * 1000;
+    if Gap < Stats.GapMin then Stats.GapMin := Gap;
+    if Gap > Stats.GapPeak then Stats.GapPeak := Gap;
+    Stats.GapSum := Stats.GapSum + Gap;
+    Inc(Stats.GapCount);
+  end;
+  Stats.LastPush := Now;
+
+  if AUpdateMilliseconds > Stats.UpdatePeak then Stats.UpdatePeak := AUpdateMilliseconds;
+  if AAccepted then Inc(Stats.ChunksPushed) else Inc(Stats.ChunksDropped);
+  if AStarved then Inc(Stats.ChunksStarved);
+end;
+
+procedure StatsReport;
+var
+  Now, Span, MeanGap, ConsumedAt, ConsumeSpan: Double;
+  GenerateHz, ConsumeHz, GenerateX, ConsumeX: Double;
+  Device: Integer;
+  Pushed, Dropped, Starved, Consumed: Int64;
+begin
+  Now := GetTime;
+  Span := Now - Stats.MarkTime;
+  if (Span <= 0) or (Stats.Frames = 0) then Exit;
+
+  Pushed := Stats.ChunksPushed - Stats.MarkPushed;
+  Dropped := Stats.ChunksDropped - Stats.MarkDropped;
+  Starved := Stats.ChunksStarved - Stats.MarkStarved;
+  StatsReadConsumed(Consumed, ConsumedAt);
+
+  { Generation is what the emulator produced, accepted or not - that is the
+    producer's clock, and every chunk is exactly AudioChunkFrames, so the mean
+    interval between chunks gives the rate directly. Delivery is Pushed alone. }
+  MeanGap := Stats.GapSum / Max(Stats.GapCount, 1);
+  GenerateHz := if Stats.GapCount > 0 then AudioChunkFrames * 1000 / MeanGap else 0;
+
+  { MarkConsumedAt is 0 until the probe has been through a full interval, and
+    the first report would otherwise measure from the epoch. }
+  ConsumeSpan := ConsumedAt - Stats.MarkConsumedAt;
+  ConsumeHz := if (Stats.MarkConsumedAt > 0) and (ConsumeSpan > 0)
+    then (Consumed - Stats.MarkConsumed) / ConsumeSpan
+    else 0;
+
+  Device := StatsNearestRate(ConsumeHz);
+  GenerateX := GenerateHz / AudioFrequency;
+  ConsumeX := ConsumeHz / Device;
+
+  Writeln($'[audio {Now - Stats.Start:%7.1f}s] chunks {Pushed} pushed, ' +
+    $'{Dropped} dropped ({Stats.ChunksDropped} total), ' +
+    $'{Starved} starved ({Stats.ChunksStarved} total)   ' +
+    $'gap ms {Stats.GapMin:%.2f}/{MeanGap:%.2f}/{Stats.GapPeak:%.2f}   ' +
+    $'UpdateAudioStream peak {Stats.UpdatePeak:%.2f} ms');
+
+  Writeln($'                  rate generate {GenerateHz:%9.1f} Hz ({GenerateX:%.6f}x)   ' +
+    $'consume {ConsumeHz:%9.1f} Hz ({ConsumeX:%.6f}x of {Device})   ' +
+    $'drift {(GenerateX - ConsumeX) * 1000000:%.0f} ppm');
+
+  Writeln($'                  device block {Stats.BlockMin}..{Stats.BlockPeak} frames, ' +
+    $'callback gap peak {Stats.CallbackGapPeak * 1000:%.2f} ms');
+
+  Writeln($'                  frame ms period {StatsMean(Stats.Period):%.2f}/{Stats.Period.Peak:%.2f}   ' +
+    $'emu {StatsMean(Stats.Emu):%.2f}/{Stats.Emu.Peak:%.2f}   ' +
+    $'blit {StatsMean(Stats.Blit):%.2f}/{Stats.Blit.Peak:%.2f}   ' +
+    $'present {StatsMean(Stats.Present):%.2f}/{Stats.Present.Peak:%.2f}   ' +
+    $'({Stats.Frames} frames, {Stats.IdleFrames} idle)');
+
+  if Stats.IdleFrames > 0 then
+    Writeln('                  (idle frames were paused or muted - no audio was ' +
+      'generated in them, so the rates above understate generation)');
+
+  Flush(Output);
+
+  Stats.MarkTime := Now;
+  Stats.MarkPushed := Stats.ChunksPushed;
+  Stats.MarkDropped := Stats.ChunksDropped;
+  Stats.MarkStarved := Stats.ChunksStarved;
+  Stats.MarkConsumed := Consumed;
+  Stats.MarkConsumedAt := ConsumedAt;
+  Stats.NextReport := Now + StatsInterval;
+
+  Stats.GapMin := Infinity;
+  Stats.GapPeak := 0;
+  Stats.GapSum := 0;
+  Stats.GapCount := 0;
+  Stats.UpdatePeak := 0;
+  Stats.Frames := 0;
+  Stats.IdleFrames := 0;
+  Stats.Period := Default(TStatsSegment);
+  Stats.Emu := Default(TStatsSegment);
+  Stats.Blit := Default(TStatsSegment);
+  Stats.Present := Default(TStatsSegment);
+  Stats.BlockMin := High(LongWord);
+  Stats.BlockPeak := 0;
+  Stats.CallbackGapPeak := 0;
+end;
+
+{ AEmuDone/ABlitDone/AFrameDone are GetTime readings taken at the end of each
+  stage of RunFrame. "present" covers EndDrawing, so it also carries raylib's
+  own wait whenever SetTargetFPS is doing the pacing - a large figure there is
+  normal in that case, and only the residue of the swap when the frame limiter
+  lives in the caller's loop instead. The number that must stay at 20 ms either
+  way is "period", the wall time between the starts of consecutive frames. }
+procedure StatsFrame(AStart, AEmuDone, ABlitDone, AFrameDone: Double; AIdle: Boolean);
+begin
+  if not Stats.Enabled then Exit;
+
+  Inc(Stats.Frames);
+  if AIdle then Inc(Stats.IdleFrames);
+
+  if Stats.LastFrame > 0 then StatsAdd(Stats.Period, (AStart - Stats.LastFrame) * 1000);
+  Stats.LastFrame := AStart;
+
+  StatsAdd(Stats.Emu, (AEmuDone - AStart) * 1000);
+  StatsAdd(Stats.Blit, (ABlitDone - AEmuDone) * 1000);
+  StatsAdd(Stats.Present, (AFrameDone - ABlitDone) * 1000);
+
+  if AFrameDone >= Stats.NextReport then StatsReport;
+end;
 procedure TApplication.SetFullscreen(AValue: Boolean);
 begin
   if FFullscreen = AValue then Exit;
@@ -581,6 +847,7 @@ begin
 
   FreeAndNil(Machine);
 
+  StatsShutdown;
   if IsAudioStreamValid(AudioStream) then UnloadAudioStream(AudioStream);
   if IsAudioDeviceReady then CloseAudioDevice;
 
@@ -661,7 +928,9 @@ begin
     Config.ReadInteger('Window', 'Height', 600),
     'Spec');
 
-  SetTargetFPS(FPS);
+  {$ifndef USE_SDL3_DELAY}
+    SetTargetFPS(FPS)
+  {$endif};
   SetWindowState(FLAG_WINDOW_RESIZABLE);
   ClearWindowState(FLAG_VSYNC_HINT);
 
@@ -710,6 +979,8 @@ begin
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
   SetVolume(Config.ReadFloat('Audio', 'Volume', 0.4));
   Muted := Config.ReadBool('Audio', 'Muted', False);
+
+  StatsInit;
 end;
 
 procedure TApplication.SetVolume(AVolume: Single; K: Single = 4);
@@ -723,7 +994,12 @@ var
   Dest: TRectangle;
   S: String;
   Key: TKeyboardKey;
+  Started, EmuDone, BlitDone: Double;
+  Idle: Boolean;
 begin
+  Started := GetTime;
+  Idle := Paused or Muted;
+
   HandleInput;
 
   if not Paused then
@@ -738,6 +1014,8 @@ begin
     end;
   end;
 
+  EmuDone := GetTime;
+
   UpdateTexture(Video, Image.data);
 
   BeginTextureMode(Target);
@@ -746,6 +1024,8 @@ begin
       RectangleCreate(0, 0, Target.texture.width, Target.texture.height),
       Vector2Zero, 0, WHITE);
   EndTextureMode;
+
+  BlitDone := GetTime;
 
   BeginDrawing;
     ClearBackground(BLACK);
@@ -827,6 +1107,8 @@ begin
       else
         OSD.Text := '';
   EndDrawing;
+
+  StatsFrame(Started, EmuDone, BlitDone, GetTime, Idle);
 end;
 
 function TApplication.BuildMenu: TMenu;
@@ -946,6 +1228,10 @@ procedure TApplication.Run;
 var
   I: Integer;
   Error: String;
+  {$ifdef USE_SDL3_DELAY}
+    FrameTime: Double;
+    Delta: Int64;
+  {$endif}
 begin
   Machine.Power := True;
 
@@ -975,7 +1261,19 @@ begin
 
   SetExitKey(KEY_NULL);
 
-  while not (WindowShouldClose or QuitRequested) do RunFrame;
+  {$ifdef USE_SDL3_DELAY}
+    FrameTime := GetTime;
+  {$endif}
+
+  while not (WindowShouldClose or QuitRequested) do
+  begin
+    RunFrame;
+    {$ifdef USE_SDL3_DELAY}
+      FrameTime := FrameTime + (1 / FPS);
+      Delta := Trunc(((1 / FPS) - GetTime + FrameTime) * 1.0e9);
+      if Delta > 0 then SDL_DelayPrecise(Delta);
+    {$endif}
+  end;
 
   StopAudioStream(AudioStream);
 end;
@@ -1132,6 +1430,9 @@ begin
 end;
 
 procedure TApplication.RenderAudioFrame;
+var
+  Accepted, Starved: Boolean;
+  Started, Updated: Double;
 begin
   AdvanceAudio(TStatesPerFrame);
   PrevTiming := 0;
@@ -1144,8 +1445,24 @@ begin
   Inc(AccumPos, SamplesPerFrame);
   if AccumPos >= AudioChunkFrames then
   begin
-    if IsAudioStreamProcessed(AudioStream) then
+    { A chunk the stream is too busy to take is dropped on the floor, silently
+      losing AudioChunkFrames' worth of audio - the instrumentation counts
+      those, since each one is a discontinuity the speaker reproduces as a
+      click. Timing the handoff itself catches the other case, where the call
+      blocks behind the device thread. }
+    Started := GetTime;
+    Accepted := IsAudioStreamProcessed(AudioStream);
+    if Accepted then
       UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
+    Updated := GetTime;
+
+    { The stream holds two sub-buffers. One having just been filled, a stream
+      that still reports a processed sub-buffer has the other one free as well
+      - the device had already drained everything and played silence into the
+      gap. That is the underrun case, which the drop count above cannot see. }
+    Starved := Accepted and IsAudioStreamProcessed(AudioStream);
+
+    StatsChunk(Accepted, Starved, (Updated - Started) * 1000);
     AccumPos := 0;
   end;
 end;
