@@ -33,7 +33,7 @@ uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
   {$ifdef USE_DELAY} Utils, {$endif}
-  Z80, Spectrum, OSDMenu, Keyboards;
+  Z80, Spectrum, OSDMenu, Keyboards, Catalogs;
 
 type
   TApplication = class(TComponent)
@@ -97,6 +97,7 @@ type
     Overscan: Integer;
     QuitRequested: Boolean;
     BorderT: Integer;
+    CurrentFile: String;
     property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
       down in real time, so it is filled in lazily: whenever the colour is
@@ -171,8 +172,6 @@ const
   LoadableExtensions: array[0..2] of String = ('.z80', '.tap', '.wav');
 
 var
-  ScreenshotDir: String = '';
-  PendingScreenshot: Boolean = False;
   TapeFile: String = '';
   AudioBuffer: array[0..SamplesPerFrame - 1] of CInt16;
   AudioStream: TAudioStream;
@@ -716,6 +715,7 @@ begin
     else
     begin
       Machine.LoadZ80(AFilename);
+      CurrentFile := AFilename;
       Result := True;
     end;
   except
@@ -735,6 +735,7 @@ begin
   end;
 
   TapeFile := AFilename;   { the Save field takes its default name from here }
+  CurrentFile := AFilename;
 
   if Tape and TapeAutoLoad then
   begin
@@ -1174,6 +1175,13 @@ begin
       Sender.Menu.Close;
     end);
 
+  if not Catalog.IsEmpty then
+    Result.Root.AddItem('Catalog', '',
+      procedure(Sender: TMenuItem)
+      begin
+        Sender.Menu.Close;
+      end);
+
   Result.Root.AddBrowser('Load', BrowsePath,
     procedure(Sender: TFileMenuItem)
     begin
@@ -1339,6 +1347,7 @@ end;
 procedure TApplication.HandleInput;
 var
   Buffer: TImage;
+  Filename: String;
 begin
   if Assigned(Menu) then
   begin
@@ -1356,6 +1365,15 @@ begin
         { Nothing was generated while the menu was up. }
         PrimeAudio;
       end;
+  end;
+
+  if IsKeyPressed(KEY_SCROLL_LOCK) then
+  begin
+    Filename := TPath.GetFileNameWithoutExtension(CurrentFile);
+    if Filename.IsEmpty then Filename := 'screen';
+    Filename := Filename + '.png';
+    ExportImage(Image, PChar(Filename));
+    SetOSD('Saved ' + Filename);
   end;
 
   if IsKeyPressed(KEY_F11) then

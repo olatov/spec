@@ -13,3 +13,4 @@
 *.TAP
 *.wav
 /spec
+catalog/

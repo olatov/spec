@@ -90,12 +90,8 @@
             <LinkSmart Value="True"/>
           </Linking>
           <Other>
-            <CustomOptions Value="-dUSE_DELAY"/>
-            <OtherDefines Count="4">
-              <Define0 Value="DEBUG_AUDIO"/>
-              <Define1 Value="USE_SDL3_DELAYPRECISE"/>
-              <Define2 Value="USE_SDL3_DELAYNS"/>
-              <Define3 Value="USE_DELAY"/>
+            <OtherDefines Count="1">
+              <Define0 Value="USE_DELAY"/>
             </OtherDefines>
           </Other>
         </CompilerOptions>
@@ -140,6 +136,10 @@
       <Unit>
         <Filename Value="utils.pas"/>
         <UnitName Value="Utils"/>
+      </Unit>
+      <Unit>
+        <Filename Value="catalogs.pas"/>
+        <UnitName Value="Catalogs"/>
       </Unit>
     </Units>
   </ProjectOptions>

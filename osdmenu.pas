@@ -133,8 +133,8 @@ type
 
 const
   MenuLeft = 24;
-  MenuLineHeight = 32;
-  MenuVisibleItems = 10;
+  MenuLineHeight = 30;
+  MenuVisibleItems = 12;
 
 implementation
 
