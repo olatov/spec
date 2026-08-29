@@ -93,9 +93,9 @@
             <CustomOptions Value="-dUSE_DELAY"/>
             <OtherDefines Count="4">
               <Define0 Value="DEBUG_AUDIO"/>
-              <Define1 Value="USE_NANO_SLEEP"/>
-              <Define2 Value="USE_SDL3_DELAYPRECISE"/>
-              <Define3 Value="USE_SDL3_DELAYNS"/>
+              <Define1 Value="USE_SDL3_DELAYPRECISE"/>
+              <Define2 Value="USE_SDL3_DELAYNS"/>
+              <Define3 Value="USE_DELAY"/>
             </OtherDefines>
           </Other>
         </CompilerOptions>
