@@ -66,6 +66,7 @@ type
     function LoadFile(const AFilename: String; out AError: String): Boolean;
     procedure SetFullscreen(AValue: Boolean);
     procedure SetVolume(AVolume: Single; K: Single = 4);
+    procedure PrimeAudio;
     function AutoLoadAction(Frame: Int64): Boolean;
   public
     Machine: TZXSpectrum48;
@@ -1246,7 +1247,10 @@ begin
   if Muted and IsAudioStreamPlaying(AudioStream) then
     StopAudioStream(AudioStream)
   else if IsAudioStreamValid(AudioStream) then
+  begin
     PlayAudioStream(AudioStream);
+    PrimeAudio;
+  end;
 end;
 
 procedure TApplication.SetTapeAutoLoad(AValue: Boolean);
@@ -1260,7 +1264,6 @@ end;
 
 procedure TApplication.Run;
 var
-  I: Integer;
   Error: String;
   {$ifdef USE_DELAY}
     FrameTime, Delta: Double;
@@ -1281,15 +1284,10 @@ begin
     end;
   end;
 
-  FillByte(AccumBuf, SizeOf(AccumBuf), 0); { 0 = silence for signed 16-bit PCM }
-
   if not Muted then
   begin
     PlayAudioStream(AudioStream);
-
-    for I := 1 to 3 do
-      if IsAudioStreamProcessed(AudioStream) then
-        UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
+    PrimeAudio;
   end;
 
   SetExitKey(KEY_NULL);
@@ -1339,6 +1337,8 @@ begin
     Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
       begin
         FreeAndNil(Menu);
+        { Nothing was generated while the menu was up. }
+        PrimeAudio;
       end;
   end;
 
@@ -1473,11 +1473,33 @@ begin
   PaintBorderUntil(TStatesPerFrame);
 end;
 
+{ Refills the stream so playback resumes on a full cushion. Nothing else
+  rebuilds one: in steady state the device drains a chunk in exactly the time
+  the emulator takes to produce one, so a stream that has been emptied - by the
+  menu being open, by a mute, by a minimised window, by a stall - comes back
+  with a single chunk of margin and stays there, and ordinary jitter then takes
+  it under several times a second for the rest of the session. Only sub-buffers
+  the device has finished with are filled, so this does nothing to a stream that
+  is already full. }
+procedure TApplication.PrimeAudio;
+var
+  I: Integer;
+begin
+  if not IsAudioStreamValid(AudioStream) then Exit;
+
+  FillByte(AccumBuf, SizeOf(AccumBuf), 0); { 0 = silence for signed 16-bit PCM }
+  AccumPos := 0;
+
+  { The stream is two sub-buffers deep, so a third pass could never be taken. }
+  for I := 1 to 2 do
+    if IsAudioStreamProcessed(AudioStream) then
+      UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
+end;
+
 procedure TApplication.RenderAudioFrame;
 var
-  Accepted: Boolean;
+  Accepted, Starved: Boolean;
   {$ifdef DEBUG_AUDIO}
-    Starved: Boolean;
     Started, Updated: Double;
   {$endif}
 begin
@@ -1505,16 +1527,25 @@ begin
       UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
     {$ifdef DEBUG_AUDIO}
       Updated := GetTime;
+    {$endif}
 
-      { The stream holds two sub-buffers. One having just been filled, a stream
-        that still reports a processed sub-buffer has the other one free as well
-        - the device had already drained everything and played silence into the
-        gap. That is the underrun case, which the drop count above cannot see. }
-      Starved := Accepted and IsAudioStreamProcessed(AudioStream);
+    { The stream holds two sub-buffers. One having just been filled, a stream
+      that still reports a processed sub-buffer has the other one free as well
+      - the device had already drained everything and played silence into the
+      gap. That is the underrun the drop count above cannot see, and it does not
+      pass: producer and device are rate matched, so margin the stream loses it
+      never wins back, and it would go on running dry several times a second for
+      the rest of the session. The gap has already been heard by the time we get
+      here, so putting silence in the spare sub-buffer costs nothing further and
+      restores the cushion. }
+    Starved := Accepted and IsAudioStreamProcessed(AudioStream);
 
+    AccumPos := 0;
+    if Starved then PrimeAudio;
+
+    {$ifdef DEBUG_AUDIO}
       StatsChunk(Accepted, Starved, (Updated - Started) * 1000);
     {$endif}
-    AccumPos := 0;
   end;
 end;
 
