@@ -251,7 +251,7 @@ begin
 
   if FPicture.id > 0 then
     DrawTexturePro(FPicture,
-      RectangleCreate(0, 0, FPicture.width, FPicture.height),
+      RectangleCreate(Crop, Crop, FPicture.width - (2 * Crop), FPicture.height - (2 * Crop)),
       Frame, [0, 0], 0, WHITE)
   else
     DrawTextEx(Font, '(no picture)',
