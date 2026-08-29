@@ -73,6 +73,7 @@ const
   { The pictures are whole emulator frames (352x288), which the emulator itself
     shows stretched to 4:3 - so that is how they are shown here too. }
   CatalogPictureHeight = CatalogPictureWidth * 3 div 4;
+  CatalogNameSize = 20;
 
 {$embedstr CatalogData 'catalog/catalog.csv'}
 
@@ -237,6 +238,8 @@ end;
 procedure TCatalogMenuItem.Render(ATop: Integer);
 var
   Frame: TRectangle;
+  Line: String;
+  Y: Single;
 begin
   if SelectedIndex <> FPictureIndex then ShowPicture(SelectedIndex);
   Catalog.CurrentItemIndex := SelectedIndex;
@@ -256,9 +259,20 @@ begin
 
   DrawRectangleLinesEx(Frame, 1, DARKGRAY);
 
+  { The column of titles is only as wide as it is, so a long one is cut short
+    there - under the picture it is spelled out in full, wrapped rather than
+    trimmed. }
+  Y := Frame.y + Frame.height + 12;
+
+  if Assigned(SelectedItem) then
+    for Line in WrapText(Font, SelectedItem.Text, CatalogNameSize, Frame.width) do
+    begin
+      DrawTextEx(Font, PChar(Line), [Frame.x, Y], CatalogNameSize, 0, YELLOW);
+      Y := Y + CatalogNameSize + 4;
+    end;
+
   if not Warning.IsEmpty then
-    DrawTextEx(Font, PChar(Warning),
-      [Frame.x, Frame.y + Frame.height + 12], 20, 0, RED);
+    DrawTextEx(Font, PChar(Warning), [Frame.x, Y + 8], 20, 0, RED);
 end;
 
 function TCatalogMenuItem.Footer: String;

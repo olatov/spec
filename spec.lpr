@@ -12,7 +12,7 @@ program Spec;
 {$endif}
 
 uses
-  Main, catalogs;
+  Main;
 
 begin
   with TApplication.Create(Nil) do

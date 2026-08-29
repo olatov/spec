@@ -11,6 +11,7 @@ uses
 type
   TKeyboard = class
   private
+    FHeldOver: TKeyboardKey;
     function GetBreakSpaceKey: TKeyboardKey;
     function GetCapsShiftKey: TKeyboardKey;
     class function GetKeyName(AKey: TKeyboardKey): String; static;
@@ -24,6 +25,11 @@ type
     property BreakSpaceKey: TKeyboardKey read GetBreakSpaceKey;
     class property KeyName[AKey: TKeyboardKey]: String read GetKeyName;
     class function GetKeyNames(AKeys: TArray<TKeyboardKey>): TStringArray;
+    { A key still held when the OSD menu closed was meant for the menu, not for
+      the machine - which starts running again that very frame, in time to read
+      the ENTER that picked a game as the game's own "press any key". Poll
+      reports an idle keyboard until AKey has been let go. }
+    procedure SuppressUntilReleased(AKey: TKeyboardKey);
     constructor Create;
     function Poll(APort: Word): Byte;
   end;
@@ -85,8 +91,14 @@ begin
     Result[I] := KeyName[AKeys[I]];
 end;
 
+procedure TKeyboard.SuppressUntilReleased(AKey: TKeyboardKey);
+begin
+  FHeldOver := AKey;
+end;
+
 constructor TKeyboard.Create;
 begin
+  FHeldOver := KEY_NULL;
   CapsShiftKeys := [KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT];
   SymbolShiftKeys :=
     {$ifdef Darwin}
@@ -103,6 +115,12 @@ var
   Key: TKeyboardKey;
 begin
   if APort.Bits[0] then Exit($FF);
+
+  { $FF is what an idle keyboard reads as - the machine is deaf, rather than
+    seeing something else, until the menu's keystroke is over. Nothing else in
+    the port read is touched, so the tape signal keeps its timing. }
+  if FHeldOver <> KEY_NULL then
+    if IsKeyDown(FHeldOver) then Exit($FF) else FHeldOver := KEY_NULL;
 
   Result := 0;
   Data := 0;

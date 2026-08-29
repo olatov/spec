@@ -138,6 +138,9 @@ type
 { AText trimmed to what fits AWidth at ASize, with an ellipsis standing in for
   whatever had to go. }
 function FitText(AFont: TFont; const AText: String; ASize, AWidth: Single): String;
+{ AText broken at spaces into lines that each fit AWidth at ASize. A single
+  word too wide for the column has nowhere to break, so it is trimmed instead. }
+function WrapText(AFont: TFont; const AText: String; ASize, AWidth: Single): TStringArray;
 
 const
   { The size of the texture the menu is drawn into, and so the room every page
@@ -163,6 +166,44 @@ begin
     SetLength(Result, Length(Result) - 1);
 
   Result := Result.TrimRight + Ellipsis;
+end;
+
+function WrapText(AFont: TFont; const AText: String; ASize, AWidth: Single): TStringArray;
+var
+  Line: String = '';
+  Count: Integer = 0;
+  Token: String;
+
+  { Closes the line being built, trimmed in case it holds a single word that
+    was too wide to break. }
+  procedure Emit;
+  begin
+    if Line.IsEmpty then Exit;
+    SetLength(Result, Count + 1);
+    Result[Count] := FitText(AFont, Line, ASize, AWidth);
+    Inc(Count);
+    Line := '';
+  end;
+
+begin
+  Result := Nil;
+
+  for Token in AText.Split([' ']) do
+  begin
+    if Token.IsEmpty then Continue;
+
+    if Line.IsEmpty then
+      Line := Token
+    else if MeasureTextEx(AFont, PChar(Line + ' ' + Token), ASize, 0).x > AWidth then
+    begin
+      Emit;
+      Line := Token;
+    end
+    else
+      Line := Line + ' ' + Token;
+  end;
+
+  Emit;
 end;
 
 function TMenuItem.GetSelectedItem: TMenuItem;

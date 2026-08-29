@@ -90,8 +90,11 @@
             <LinkSmart Value="True"/>
           </Linking>
           <Other>
-            <OtherDefines Count="1">
+            <CustomOptions Value="-dUSE_DELAY
+-dINCLUDE_CATALOG"/>
+            <OtherDefines Count="2">
               <Define0 Value="USE_DELAY"/>
+              <Define1 Value="INCLUDE_CATALOG"/>
             </OtherDefines>
           </Other>
         </CompilerOptions>

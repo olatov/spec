@@ -33,7 +33,7 @@ uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
   {$ifdef USE_DELAY} Utils, {$endif}
-  Z80, Spectrum, OSDMenu, Keyboards, Catalogs;
+  Z80, Spectrum, OSDMenu, Keyboards {$ifdef INCLUDE_CATALOG}, Catalogs {$endif};
 
 type
   TApplication = class(TComponent)
@@ -42,7 +42,9 @@ type
     Config: TIniFile;
     FMuted: Boolean;
     FTapeAutoLoad: Boolean;
-    FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
+    {$ifdef INCLUDE_CATALOG}
+      FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
+    {$endif}
     FAutoLoad: record
       Active: Boolean;
       Frame: Integer;
@@ -695,7 +697,6 @@ var
   Extension: String;
   Tape: Boolean;
 begin
-  AError := '';
   Result := False;
 
   if not TFile.Exists(AFilename) then
@@ -1177,24 +1178,26 @@ begin
       Sender.Menu.Close;
     end);
 
-  { The Catalog page is built from the list, and every entry on it carries its
-    own path - so one handler serves all of them, and it is the browser's Open
-    handler with the folders left out. }
-  FCatalogPage := Nil;
-  if not Catalog.IsEmpty then
-    FCatalogPage := AddCatalogPage(Result.Root,
-      procedure(Sender: TMenuItem)
-      var
-        Error: String;
-      begin
-        if LoadFile(Sender.Data, Error) then
+  {$ifdef INCLUDE_CATALOG}
+    { The Catalog page is built from the list, and every entry on it carries its
+      own path - so one handler serves all of them, and it is the browser's Open
+      handler with the folders left out. }
+    FCatalogPage := Nil;
+    if not Catalog.IsEmpty then
+      FCatalogPage := AddCatalogPage(Result.Root,
+        procedure(Sender: TMenuItem)
+        var
+          Error: String;
         begin
-          SetOSD($'Loaded {Sender.Text}');
-          Sender.Menu.Close;   { frees Sender - nothing may follow }
-        end
-        else
-          Sender.Parent.Warning := Error;
-      end);
+          if LoadFile(Sender.Data, Error) then
+          begin
+            SetOSD($'Loaded {Sender.Text}');
+            Sender.Menu.Close;   { frees Sender - nothing may follow }
+          end
+          else
+            Sender.Parent.Warning := Error;
+        end);
+  {$endif}
 
   Result.Root.AddBrowser('Load', BrowsePath,
     procedure(Sender: TFileMenuItem)
@@ -1280,12 +1283,17 @@ begin
   Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
     begin
       FreeAndNil(Menu);
+      { The ENTER that chose an item is still down, and the machine is about to
+        run again in this same frame. }
+      Machine.Keyboard.SuppressUntilReleased(KEY_ENTER);
       { Nothing was generated while the menu was up. }
       PrimeAudio;
     end;
 
-  { An empty catalog has no page to show, and Show ignores it. }
-  if ACatalog then Menu.Show(FCatalogPage);
+  {$ifdef INCLUDE_CATALOG}
+    { An empty catalog has no page to show, and Show ignores it. }
+    if ACatalog then Menu.Show(FCatalogPage);
+  {$endif}
 end;
 
 function TApplication.GetPaused: Boolean;
@@ -1346,10 +1354,12 @@ begin
     PrimeAudio;
   end;
 
-  { Nothing asked for on the command line and something to offer: the session
-    starts at the catalog rather than at a bare BASIC prompt. A file that was
-    asked for and failed does not - its error is what the screen has to say. }
-  if not Requested and not Catalog.IsEmpty then OpenMenu(True);
+  {$ifdef INCLUDE_CATALOG}
+    { Nothing asked for on the command line and something to offer: the session
+      starts at the catalog rather than at a bare BASIC prompt. A file that was
+      asked for and failed does not - its error is what the screen has to say. }
+    if not Requested and not Catalog.IsEmpty then OpenMenu(True);
+  {$endif}
 
   SetExitKey(KEY_NULL);
 
@@ -1395,11 +1405,17 @@ begin
 
   if IsKeyPressed(KEY_F1) then OpenMenu;
 
+  {$ifdef INCLUDE_CATALOG}
+    { Straight to the catalog, skipping the top page. Nothing to show means
+      nothing happens, rather than the menu opening on something else. }
+    if IsKeyPressed(KEY_TAB) and not Catalog.IsEmpty then OpenMenu(True);
+  {$endif}
+
   if IsKeyPressed(KEY_SCROLL_LOCK) then
   begin
     Filename := TPath.GetFileNameWithoutExtension(CurrentFile);
     if Filename.IsEmpty then Filename := 'screen';
-    Filename := Filename + '.png';
+    Filename := TPath.Combine('catalog/', Filename + '.png');
     ExportImage(Image, PChar(Filename));
     SetOSD('Saved ' + Filename);
   end;
