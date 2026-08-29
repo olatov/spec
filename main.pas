@@ -2,12 +2,37 @@ unit main;
 
 {$mode unleashed}
 
+{$ifdef darwin}
+  {
+    raylib paces frames by waiting out whatever is left of the target period
+    after the frame's own work - rcore.c does WaitTime(target - update - draw)
+    - which is measured against that one frame and never against a running
+    schedule, so however far the wait overshoots is kept rather than made up.
+    On macOS that wait ends in usleep() with a 5% busy-wait reserve, around
+    0.8 ms of a 16.5 ms wait, and macOS overshoots that often enough to matter:
+    frames come out at 20.13 ms instead of 20.00.
+
+    A 0.7% shortfall is invisible as video and fatal as audio. The emulator
+    ends up generating about 43,800 samples a second for a device consuming
+    44,100, so the stream's two 100 ms buffers run dry some twelve seconds in,
+    and from then on every chunk arrives into a device that has already played
+    silence - a click, ten times a second, for the rest of the session. Linux
+    takes WaitTime's nanosleep branch instead, whose overshoot stays inside the
+    reserve, which is why none of this shows up there.
+
+    Run's loop below keeps an absolute schedule of its own instead, so a frame
+    that overshoots is made up by the next one rather than by every one after
+    it, and NanoSleep replaces the frame limiter.
+  }
+  {$define USE_NANO_SLEEP}
+{$endif}
+
 interface
 
 uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
-  {$ifdef USE_SDL3_DELAY} Utils, {$endif}
+  {$ifdef USE_NANO_SLEEP} Utils, {$endif}
   Z80, Spectrum, OSDMenu, Keyboards;
 
 type
@@ -928,7 +953,7 @@ begin
     Config.ReadInteger('Window', 'Height', 600),
     'Spec');
 
-  {$ifndef USE_SDL3_DELAY}
+  {$ifndef USE_NANO_SLEEP}
     SetTargetFPS(FPS)
   {$endif};
   SetWindowState(FLAG_WINDOW_RESIZABLE);
@@ -1228,7 +1253,7 @@ procedure TApplication.Run;
 var
   I: Integer;
   Error: String;
-  {$ifdef USE_SDL3_DELAY}
+  {$ifdef USE_NANO_SLEEP}
     FrameTime: Double;
     Delta: Int64;
   {$endif}
@@ -1261,17 +1286,28 @@ begin
 
   SetExitKey(KEY_NULL);
 
-  {$ifdef USE_SDL3_DELAY}
+  {$ifdef USE_NANO_SLEEP}
     FrameTime := GetTime;
   {$endif}
 
   while not (WindowShouldClose or QuitRequested) do
   begin
     RunFrame;
-    {$ifdef USE_SDL3_DELAY}
+    {$ifdef USE_NANO_SLEEP}
       FrameTime := FrameTime + (1 / FPS);
+
+      { The schedule is absolute, so a frame that overshoots is made up by the
+        next one rather than pushing every later frame back - that is what
+        keeps the emulator's sample clock in step with the audio device. A long
+        stall (dragging the window, a modal browser, a slow load) leaves the
+        schedule far enough behind that making it up means running uncapped
+        until it catches up: video at several times speed, and samples produced
+        faster than the device drains them until the stream overflows. Past a
+        whole frame of debt, write it off and start again from now. }
+      if GetTime - FrameTime > (1 / FPS) then FrameTime := GetTime;
+
       Delta := Trunc(((1 / FPS) - GetTime + FrameTime) * 1.0e9);
-      if Delta > 0 then SDL_DelayPrecise(Delta);
+      if Delta > 0 then nanosleep(Delta);
     {$endif}
   end;
 
