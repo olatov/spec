@@ -48,6 +48,15 @@
               <TrashVariables Value="True"/>
             </Debugging>
           </Linking>
+          <Other>
+            <CustomOptions Value="-dUSE_DELAY
+-dDEBUG_AUDIO"/>
+            <OtherDefines Count="3">
+              <Define0 Value="DEBUG_AUDIO"/>
+              <Define1 Value="USE_NANO_SLEEP"/>
+              <Define2 Value="USE_SDL3_DELAYPRECISE"/>
+            </OtherDefines>
+          </Other>
         </CompilerOptions>
       </Item>
       <Item Name="Release">
@@ -80,6 +89,15 @@
             </Debugging>
             <LinkSmart Value="True"/>
           </Linking>
+          <Other>
+            <CustomOptions Value="-dUSE_DELAY"/>
+            <OtherDefines Count="4">
+              <Define0 Value="DEBUG_AUDIO"/>
+              <Define1 Value="USE_NANO_SLEEP"/>
+              <Define2 Value="USE_SDL3_DELAYPRECISE"/>
+              <Define3 Value="USE_SDL3_DELAYNS"/>
+            </OtherDefines>
+          </Other>
         </CompilerOptions>
       </Item>
     </BuildModes>
@@ -119,6 +137,10 @@
         <Filename Value="joysticks.pas"/>
         <UnitName Value="Joysticks"/>
       </Unit>
+      <Unit>
+        <Filename Value="utils.pas"/>
+        <UnitName Value="Utils"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
@@ -141,6 +163,16 @@
         <DebugInfoType Value="dsDwarf3"/>
       </Debugging>
     </Linking>
+    <Other>
+      <CustomOptions Value="-dUSE_DELAY
+-dDEBUG_AUDIO"/>
+      <OtherDefines Count="4">
+        <Define0 Value="DEBUG_AUDIO"/>
+        <Define1 Value="USE_NANO_SLEEP"/>
+        <Define2 Value="USE_SDL3_DELAYPRECISE"/>
+        <Define3 Value="USE_SDL3_DELAYNS"/>
+      </OtherDefines>
+    </Other>
   </CompilerOptions>
   <Debugging>
     <Exceptions>

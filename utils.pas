@@ -4,7 +4,7 @@ unit Utils;
 
 interface
 
-procedure NanoSleep(NS: UInt64); inline;
+procedure Delay(ASecs: Double); inline;
 
 implementation
 
@@ -35,9 +35,9 @@ const
 var
   SDL_DelayFunc: procedure(NS: UInt64); cdecl;
 
-procedure NanoSleep(NS: UInt64); inline;
+procedure Delay(ASecs: Double); inline;
 begin
-  SDL_DelayFunc(NS);
+  SDL_DelayFunc(Trunc(ASecs * 1.0e+9));
 end;
 
 initialization
@@ -51,18 +51,20 @@ finalization
 uses
   BaseUnix, SysUtils;
 
-procedure NanoSleep(NS: UInt64); inline;
+procedure Delay(ASecs: Double); inline;
 var
   TS: array[1..2] of TTimeSpec;
   Requested, Remaining: PTimeSpec;
   Result: CInt;
   Interrupted: Boolean;
+  NS: UInt64;
 begin
   Requested := @TS[1];
   Remaining := @TS[2];
 
   { tv_nsec has to stay under a second or nanosleep rejects the whole call
     with EINVAL. }
+  NS := Trunc(ASecs * 1.0e+9);
   Requested^.tv_sec := NS div 1000000000;
   Requested^.tv_nsec := NS mod 1000000000;
 
@@ -75,6 +77,19 @@ begin
     Interrupted := (Result = -1) and (fpgeterrno = ESysEINTR);
     if Interrupted then Swap<ptimespec>(Requested, Remaining);
   until not Interrupted;
+end;
+{$elseif defined(mswindows)}
+uses
+  Windows, MMSystem;
+
+procedure Delay(ASecs: Double); inline;
+begin
+  if timeBeginPeriod(1) = 0 then
+  try
+    Windows.Sleep(Trunc(ASecs * 1000));
+  finally
+    timeEndPeriod(1);
+  end;
 end;
 {$else}
   {$fail 'Unsupported platform'}

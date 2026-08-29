@@ -24,7 +24,7 @@ unit main;
     that overshoots is made up by the next one rather than by every one after
     it, and NanoSleep replaces the frame limiter.
   }
-  {$define USE_NANO_SLEEP}
+  {$define USE_DELAY}
 {$endif}
 
 interface
@@ -32,7 +32,7 @@ interface
 uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
-  {$ifdef USE_NANO_SLEEP} Utils, {$endif}
+  {$ifdef USE_DELAY} Utils, {$endif}
   Z80, Spectrum, OSDMenu, Keyboards;
 
 type
@@ -958,7 +958,7 @@ begin
     Config.ReadInteger('Window', 'Height', 600),
     'Spec');
 
-  {$ifndef USE_NANO_SLEEP}
+  {$ifndef USE_DELAY}
     SetTargetFPS(FPS)
   {$endif};
   SetWindowState(FLAG_WINDOW_RESIZABLE);
@@ -1262,9 +1262,8 @@ procedure TApplication.Run;
 var
   I: Integer;
   Error: String;
-  {$ifdef USE_NANO_SLEEP}
-    FrameTime: Double;
-    Delta: Int64;
+  {$ifdef USE_DELAY}
+    FrameTime, Delta: Double;
   {$endif}
 begin
   Machine.Power := True;
@@ -1295,14 +1294,14 @@ begin
 
   SetExitKey(KEY_NULL);
 
-  {$ifdef USE_NANO_SLEEP}
+  {$ifdef USE_DELAY}
     FrameTime := GetTime;
   {$endif}
 
   while not (WindowShouldClose or QuitRequested) do
   begin
     RunFrame;
-    {$ifdef USE_NANO_SLEEP}
+    {$ifdef USE_DELAY}
       FrameTime := FrameTime + (1 / FPS);
 
       { The schedule is absolute, so a frame that overshoots is made up by the
@@ -1315,8 +1314,8 @@ begin
         whole frame of debt, write it off and start again from now. }
       if GetTime - FrameTime > (1 / FPS) then FrameTime := GetTime;
 
-      Delta := Trunc(((1 / FPS) - GetTime + FrameTime) * 1.0e9);
-      if Delta > 0 then nanosleep(Delta);
+      Delta := (1 / FPS) - GetTime + FrameTime;
+      if Delta > 0 then Delay(Delta);
     {$endif}
   end;
 

@@ -8,7 +8,7 @@ program Spec;
 {$endif}
 
 uses
-  Main;
+  Main, Utils;
 
 begin
   with TApplication.Create(Nil) do
