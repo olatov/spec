@@ -922,7 +922,6 @@ var
   I: Integer;
   LinesCount: Single = 256;
   Curvature: Single = 7.0;
-  Stream: TResourceStream;
 begin
   SetTraceLogLevel(LOG_ERROR);
 
@@ -1029,7 +1028,24 @@ var
   Key: TKeyboardKey;
   Started, EmuDone, BlitDone: Double;
   Idle: Boolean;
+  Files: TFilePathList;
+  Filename, ErrorMessage: String;
 begin
+  if IsFileDropped then
+  begin
+    Files := LoadDroppedFiles;
+    try
+      if Files.count > 0 then
+      begin
+        Filename := Files.paths[0];
+        if not LoadFile(Filename, ErrorMessage) then
+          SetOSD($'{Filename}: {ErrorMessage}', 5);
+      end;
+    finally
+      UnloadDroppedFiles(Files);
+    end;
+  end;
+
   Started := GetTime;
   Idle := Paused or Muted;
 

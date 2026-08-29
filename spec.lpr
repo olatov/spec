@@ -7,8 +7,12 @@ program Spec;
   {$linkframework IOKit}
 {$endif}
 
+{$if defined(mswindows) and not defined(AUDIO_DEBUG)}
+  {$apptype gui}
+{$endif}
+
 uses
-  Main, Utils;
+  Main;
 
 begin
   with TApplication.Create(Nil) do
