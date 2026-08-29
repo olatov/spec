@@ -42,12 +42,14 @@ type
     Config: TIniFile;
     FMuted: Boolean;
     FTapeAutoLoad: Boolean;
+    FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
     FAutoLoad: record
       Active: Boolean;
       Frame: Integer;
     end;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
+    procedure OpenMenu(ACatalog: Boolean = False);
     function GetPaused: Boolean;
     procedure SetMuted(AValue: Boolean);
     procedure SetTapeAutoLoad(AValue: Boolean);
@@ -656,7 +658,7 @@ begin
     begin
       if LoadFile(Sender.Data, Error) then
       begin
-        SetOSD($'Loaded {TPath.GetFileName(Sender.Data)}');
+        SetOSD($'Loading {TPath.GetFileName(Sender.Data)}');
         Sender.Menu.Close;   { frees Sender - nothing may follow }
       end
       else
@@ -1175,11 +1177,23 @@ begin
       Sender.Menu.Close;
     end);
 
+  { The Catalog page is built from the list, and every entry on it carries its
+    own path - so one handler serves all of them, and it is the browser's Open
+    handler with the folders left out. }
+  FCatalogPage := Nil;
   if not Catalog.IsEmpty then
-    Result.Root.AddItem('Catalog', '',
+    FCatalogPage := AddCatalogPage(Result.Root,
       procedure(Sender: TMenuItem)
+      var
+        Error: String;
       begin
-        Sender.Menu.Close;
+        if LoadFile(Sender.Data, Error) then
+        begin
+          SetOSD($'Loaded {Sender.Text}');
+          Sender.Menu.Close;   { frees Sender - nothing may follow }
+        end
+        else
+          Sender.Parent.Warning := Error;
       end);
 
   Result.Root.AddBrowser('Load', BrowsePath,
@@ -1258,6 +1272,22 @@ begin
     end);
 end;
 
+{ Opens the menu, which is also what pauses the machine. ACatalog starts it on
+  the Catalog page instead of the top one. }
+procedure TApplication.OpenMenu(ACatalog: Boolean);
+begin
+  Menu := BuildMenu;
+  Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
+    begin
+      FreeAndNil(Menu);
+      { Nothing was generated while the menu was up. }
+      PrimeAudio;
+    end;
+
+  { An empty catalog has no page to show, and Show ignores it. }
+  if ACatalog then Menu.Show(FCatalogPage);
+end;
+
 function TApplication.GetPaused: Boolean;
 begin
   Result := Assigned(Menu);
@@ -1289,6 +1319,7 @@ end;
 procedure TApplication.Run;
 var
   Error: String;
+  Requested: Boolean;
   {$ifdef USE_DELAY}
     FrameTime, Delta: Double;
   {$endif}
@@ -1296,8 +1327,9 @@ begin
   Machine.Power := True;
 
   if ParamCount > 0 then TapeFile := ParamStr(1);
+  Requested := not TapeFile.IsEmpty;
 
-  if not TapeFile.IsEmpty then
+  if Requested then
   begin
     { A bare name on the command line means a TapeFile. }
     if TPath.GetExtension(TapeFile).IsEmpty then TapeFile := TapeFile + '.z80';
@@ -1313,6 +1345,11 @@ begin
     PlayAudioStream(AudioStream);
     PrimeAudio;
   end;
+
+  { Nothing asked for on the command line and something to offer: the session
+    starts at the catalog rather than at a bare BASIC prompt. A file that was
+    asked for and failed does not - its error is what the screen has to say. }
+  if not Requested and not Catalog.IsEmpty then OpenMenu(True);
 
   SetExitKey(KEY_NULL);
 
@@ -1356,16 +1393,7 @@ begin
   end
   else if IsKeyPressed(KEY_ESCAPE) then QuitRequested := True;
 
-  if IsKeyPressed(KEY_F1) then
-  begin
-    Menu := BuildMenu;
-    Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
-      begin
-        FreeAndNil(Menu);
-        { Nothing was generated while the menu was up. }
-        PrimeAudio;
-      end;
-  end;
+  if IsKeyPressed(KEY_F1) then OpenMenu;
 
   if IsKeyPressed(KEY_SCROLL_LOCK) then
   begin

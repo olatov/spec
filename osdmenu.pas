@@ -54,6 +54,10 @@ type
     procedure HandleInput; virtual;
     procedure AfterInput; virtual;
     procedure Render(ATop: Integer); virtual;
+    { Draws this page's own items as a column AWidth wide - which is the whole
+      page for most of them, and less for a page that keeps room beside the
+      list. }
+    procedure RenderItems(ATop, AWidth: Integer);
     function Footer: String; virtual;
     procedure Next;
     procedure Previous;
@@ -131,12 +135,35 @@ type
     property Texture: TTexture2D read GetTexture;
   end;
 
+{ AText trimmed to what fits AWidth at ASize, with an ellipsis standing in for
+  whatever had to go. }
+function FitText(AFont: TFont; const AText: String; ASize, AWidth: Single): String;
+
 const
+  { The size of the texture the menu is drawn into, and so the room every page
+    has to lay itself out in. }
+  MenuWidth = 640;
+  MenuHeight = 480;
   MenuLeft = 24;
   MenuLineHeight = 30;
   MenuVisibleItems = 12;
+  MenuTextSize = 24;
 
 implementation
+
+function FitText(AFont: TFont; const AText: String; ASize, AWidth: Single): String;
+const
+  Ellipsis = '...';
+begin
+  Result := AText;
+  if MeasureTextEx(AFont, PChar(Result), ASize, 0).x <= AWidth then Exit;
+
+  while not Result.IsEmpty and
+    (MeasureTextEx(AFont, PChar(Result + Ellipsis), ASize, 0).x > AWidth) do
+    SetLength(Result, Length(Result) - 1);
+
+  Result := Result.TrimRight + Ellipsis;
+end;
 
 function TMenuItem.GetSelectedItem: TMenuItem;
 begin
@@ -207,11 +234,31 @@ begin
 end;
 
 procedure TMenuItem.Render(ATop: Integer);
+begin
+  RenderItems(ATop, MenuWidth - (2 * MenuLeft));
+end;
+
+procedure TMenuItem.RenderItems(ATop, AWidth: Integer);
 var
   Item: TMenuItem;
   I, First: Integer;
-  Line: String;
+  Line, Counter: String;
+  Room, CounterWidth: Single;
 begin
+  Room := AWidth;
+
+  { A list too long to show at once is labelled with the position in it. The
+    label shares the top line with an item, so every line gives up the room it
+    takes rather than only the one that would collide with it. }
+  if Items.Count > MenuVisibleItems then
+  begin
+    Counter := $'{SelectedIndex + 1}/{Items.Count}';
+    CounterWidth := MeasureTextEx(Font, PChar(Counter), 20, 0).x;
+    Room := Room - CounterWidth - 12;
+    DrawTextEx(Font, PChar(Counter),
+      [MenuLeft + AWidth - CounterWidth, ATop], 20, 0, SKYBLUE);
+  end;
+
   { Scroll the window of items only when the selection would leave it, so
     short lists never move. }
   First := Max(0, Min(SelectedIndex - (MenuVisibleItems div 2),
@@ -225,14 +272,10 @@ begin
     if not Item.Value.IsEmpty then
       Line := Line + ': ' + Item.Value;
 
-    DrawTextEx(Font, PChar(Line), [MenuLeft, ATop + ((I - First) * MenuLineHeight)],
-      24, 0, if Item = SelectedItem then YELLOW else ORANGE);
+    DrawTextEx(Font, PChar(FitText(Font, Line, MenuTextSize, Room)),
+      [MenuLeft, ATop + ((I - First) * MenuLineHeight)],
+      MenuTextSize, 0, if Item = SelectedItem then YELLOW else ORANGE);
   end;
-
-  if Items.Count > MenuVisibleItems then
-    DrawTextEx(Font,
-      PChar($'{SelectedIndex + 1}/{Items.Count}'),
-      [560, ATop], 20, 0, SKYBLUE);
 end;
 
 function TMenuItem.Footer: String;
@@ -416,6 +459,7 @@ end;
 procedure TMenu.HandleInput;
 var
   Page: TMenuItem;
+  Notify: TMenuNotify;
 begin
   Page := FCurrent;
   Page.HandleInput;
@@ -429,7 +473,14 @@ begin
   { Items ask to leave from inside their own handler, but the owner frees the
     menu in OnClose - so it happens here, once all of their code has returned
     and nothing will touch this object again. }
-  if FCloseRequested and Assigned(OnClose) then OnClose(Self, FQuitRequested);
+  if FCloseRequested and Assigned(OnClose) then
+  begin
+    { The handler frees this menu, and with it the field holding the handler -
+      whose captured variables (the owner's Self among them) go with it. The
+      local reference keeps it alive until it has returned. }
+    Notify := OnClose;
+    Notify(Self, FQuitRequested);
+  end;
 end;
 
 constructor TMenu.Create(AOwner: TComponent);
@@ -451,7 +502,7 @@ begin
   FCurrent := Root;
 
 
-  FTarget := LoadRenderTexture(640, 480);
+  FTarget := LoadRenderTexture(MenuWidth, MenuHeight);
   SetTextureFilter(FTarget.texture, TEXTURE_FILTER_BILINEAR);
 end;
 
