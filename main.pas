@@ -81,7 +81,7 @@ type
     AudioVolume: Single;
     Target: TRenderTexture2D;
     Font: TFont;
-    KBTexture: TTexture2D;
+    KeyboardTexture: TTexture2D;
     ShowKeyboard: Boolean;
     ShowMenu: Boolean;
     Image: TImage;
@@ -936,7 +936,7 @@ begin
   if IsTextureValid(Video) then UnloadTexture(Video);
   if IsImageValid(Image) then UnloadImage(Image);
 
-  if IsTextureValid(KBTexture) then UnloadTexture(KBTexture);
+  if IsTextureValid(KeyboardTexture) then UnloadTexture(KeyboardTexture);
 
   if IsWindowReady then CloseWindow;
 end;
@@ -1042,7 +1042,7 @@ begin
       GetShaderLocation(Shaders[I], 'curvature'), @Curvature, SHADER_UNIFORM_FLOAT);
   end;
 
-  KBTexture := LoadKeyboardTexture;
+  KeyboardTexture := LoadKeyboardTexture;
 
   Image := GenImageColor(ImageWidth, ImageHeight, BLACK);
   Pixels := Image.data;
@@ -1088,13 +1088,15 @@ end;
 
 procedure TApplication.RunFrame;
 var
-  Dest: TRectangle;
-  S: String;
-  Key: TKeyboardKey;
+  Dest, Highlight: TRectangle;
   Started, EmuDone, BlitDone: Double;
   Idle: Boolean;
+  Event: TAutomationEvent;
   Files: TFilePathList;
   Filename, ErrorMessage: String;
+  Scale: Single;
+  MousePos: TVector2;
+  I: Integer;
 begin
   if IsFileDropped then
   begin
@@ -1170,43 +1172,23 @@ begin
     end
     else if ShowKeyboard then
     begin
-      Dest.height := KBTexture.height * Dest.width / KBTexture.width;
-      DrawTexturePro(KBTexture,
-        RectangleCreate(0, 0, KBTexture.width, KBTexture.height), Dest,
+      Dest.height := KeyboardTexture.height * Dest.width / KeyboardTexture.width;
+      DrawTexturePro(KeyboardTexture,
+        RectangleCreate(0, 0, KeyboardTexture.width, KeyboardTexture.height), Dest,
           Vector2Zero, 0, WHITE);
       DrawRectangleLinesEx(Dest, 1, RAYWHITE);
-      {
-      Dest.y := Dest.height;
-      DrawRectangleLinesEx(Dest, 1, RAYWHITE);
-      Dest.height := Dest.height * 0.1;
-      DrawRectangleRec(Dest, BLACK);
-      DrawRectangleLinesEx(Dest, 1, RAYWHITE);
 
-      DrawTextEx(Font,
-        PChar('CAPS: [' + String.Join('], [', TKeyboard.GetKeyNames(Machine.Keyboard.CapsShiftKeys)) + ']'),
-        [Dest.x + (Dest.width * 0.012), Dest.y + (Dest.height * 0.25)],
-        Trunc(Dest.height * 0.5), 0, YELLOW);
-
-      DrawTextEx(Font,
-        PChar('SYMB: [' + String.Join('] [', TKeyboard.GetKeyNames(Machine.Keyboard.SymbolShiftKeys)) + ']'),
-        [Dest.x + (Dest.width * 0.512), Dest.y + (Dest.height * 0.25)],
-        Trunc(Dest.height * 0.5), 0, YELLOW);
-
-      Dest.y := Dest.y + Dest.height;
-      DrawRectangleRec(Dest, BLACK);
-      DrawRectangleLinesEx(Dest, 1, RAYWHITE);
-
-      S := '';
-      if Assigned(Machine.Joystick) then
-        for Key in Machine.Joystick.Keys do
-          if Key <> KEY_NULL then
-            S := S + $' [{TKeyboard.KeyName[Key]}]';
-
-      DrawTextEx(Font,
-        PChar('Joystick: ' + Machine.JoystickName + S),
-        [Dest.x + (Dest.width * 0.012), Dest.y + (Dest.height * 0.25)],
-        Trunc(Dest.height * 0.5), 0, YELLOW);
-      }
+      Scale := Dest.width / KeyboardTexture.width;
+      for Highlight in Machine.Keyboard.GetHighlights do
+      begin
+        DrawRectangleRec(
+          RectangleCreate(
+            Dest.x + (Highlight.x * Scale),
+            Dest.y + (Highlight.y * Scale),
+            Highlight.width * Scale,
+            Highlight.height * Scale),
+          ColorAlpha(WHITE, 0.4));
+      end;
     end;
 
     if not OSD.Text.IsEmpty then

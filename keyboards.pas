@@ -5,13 +5,14 @@ unit Keyboards;
 interface
 
 uses
-  Classes, SysUtils,
+  Classes, SysUtils, FGL,
   Raylib;
 
 type
   TKeyboard = class
   private
     FHeldOver: TKeyboardKey;
+    procedure BuildKeyRects;
     function GetBreakSpaceKey: TKeyboardKey;
     function GetCapsShiftKey: TKeyboardKey;
     class function GetKeyName(AKey: TKeyboardKey): String; static;
@@ -20,6 +21,7 @@ type
     SymbolShiftKeys: TArray<TKeyboardKey>;
     CapsShiftKeys: TArray<TKeyboardKey>;
     BreakSpaceKeys: TArray<TKeyboardKey>;
+    KeyRects: TFPGMap<TKeyboardKey, TRectangle>;
     property SymbolShiftKey: TKeyboardKey read GetSymbolShiftKey;
     property CapsShiftKey: TKeyboardKey read GetCapsShiftKey;
     property BreakSpaceKey: TKeyboardKey read GetBreakSpaceKey;
@@ -31,7 +33,9 @@ type
       reports an idle keyboard until AKey has been let go. }
     procedure SuppressUntilReleased(AKey: TKeyboardKey);
     constructor Create;
+    destructor Destroy; override;
     function Poll(APort: Word): Byte;
+    function GetHighlights: TArray<TRectangle>;
   end;
 
 implementation
@@ -107,6 +111,8 @@ begin
       [KEY_RIGHT_CONTROL, KEY_LEFT_CONTROL];
     {$endif}
   BreakSpaceKeys := [KEY_SPACE];
+  KeyRects := TFPGMap<TKeyboardKey, TRectangle>.Create;
+  BuildKeyRects;
 end;
 
 function TKeyboard.Poll(APort: Word): Byte;
@@ -227,6 +233,109 @@ begin
   end;
 
   Result := not Result;
+end;
+
+destructor TKeyboard.Destroy;
+begin
+  FreeAndNil(KeyRects);
+end;
+
+procedure TKeyboard.BuildKeyRects;
+  function GetKeyRect(ARow, ACol: Integer): TRectangle;
+  var
+    BaseX: array[1..4] of Integer = (15, 63, 87, 17);
+  const
+    BaseY = 42;
+    DX = 93;
+    DY = 106;
+    Width = 60;
+    Height = 47;
+    CSWidth = 90;
+    BSWidth = 110;
+    Row4Offset = 20;
+  begin
+    Result := RectangleCreate(
+      BaseX[ARow] + (DX * (ACol - 1)),
+      BaseY + (DY * (ARow - 1)),
+      Width, Height);
+
+    if ARow = 4 then
+    begin
+      if ACol > 1 then Result.x := Result.x + Row4Offset;
+      case ACol of
+         1: Result.width := CSWidth;
+        10: Result.width := BSWidth;
+      end;
+    end;
+  end;
+
+var
+  Key: TKeyboardKey;
+begin
+  with KeyRects do
+  begin
+    Clear;
+
+    Add(KEY_ONE,   GetKeyRect(1, 1));
+    Add(KEY_TWO,   GetKeyRect(1, 2));
+    Add(KEY_THREE, GetKeyRect(1, 3));
+    Add(KEY_FOUR,  GetKeyRect(1, 4));
+    Add(KEY_FIVE,  GetKeyRect(1, 5));
+    Add(KEY_SIX,   GetKeyRect(1, 6));
+    Add(KEY_SEVEN, GetKeyRect(1, 7));
+    Add(KEY_EIGHT, GetKeyRect(1, 8));
+    Add(KEY_NINE,  GetKeyRect(1, 9));
+    Add(KEY_ZERO,  GetKeyRect(1, 10));
+
+    Add(KEY_Q, GetKeyRect(2, 1));
+    Add(KEY_W, GetKeyRect(2, 2));
+    Add(KEY_E, GetKeyRect(2, 3));
+    Add(KEY_R, GetKeyRect(2, 4));
+    Add(KEY_T, GetKeyRect(2, 5));
+    Add(KEY_Y, GetKeyRect(2, 6));
+    Add(KEY_U, GetKeyRect(2, 7));
+    Add(KEY_I, GetKeyRect(2, 8));
+    Add(KEY_O, GetKeyRect(2, 9));
+    Add(KEY_P, GetKeyRect(2, 10));
+
+    Add(KEY_A, GetKeyRect(3, 1));
+    Add(KEY_S, GetKeyRect(3, 2));
+    Add(KEY_D, GetKeyRect(3, 3));
+    Add(KEY_F, GetKeyRect(3, 4));
+    Add(KEY_G, GetKeyRect(3, 5));
+    Add(KEY_H, GetKeyRect(3, 6));
+    Add(KEY_J, GetKeyRect(3, 7));
+    Add(KEY_K, GetKeyRect(3, 8));
+    Add(KEY_L, GetKeyRect(3, 9));
+    Add(KEY_ENTER, GetKeyRect(3, 10));
+
+    for Key in CapsShiftKeys do
+      Add(Key, GetKeyRect(4, 1));
+
+    Add(KEY_Z, GetKeyRect(4, 2));
+    Add(KEY_X, GetKeyRect(4, 3));
+    Add(KEY_C, GetKeyRect(4, 4));
+    Add(KEY_V, GetKeyRect(4, 5));
+    Add(KEY_B, GetKeyRect(4, 6));
+    Add(KEY_N, GetKeyRect(4, 7));
+    Add(KEY_M, GetKeyRect(4, 8));
+
+    for Key in SymbolShiftKeys do
+      Add(Key, GetKeyRect(4, 9));
+
+    Add(KEY_SPACE, GetKeyRect(4, 10));
+  end;
+end;
+
+function TKeyboard.GetHighlights: TArray<TRectangle>;
+var
+  I: Integer;
+  Key: TKeyboardKey;
+begin
+  Result := [];
+  for I := 0 to KeyRects.Count - 1 do
+    if IsKeyDown(KeyRects.Keys[I]) then
+      Insert(KeyRects.Data[I], Result, Integer.MaxValue);
 end;
 
 end.
