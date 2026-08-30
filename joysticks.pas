@@ -5,7 +5,7 @@ unit Joysticks;
 interface
 
 uses
-  Classes, SysUtils,
+  Classes, SysUtils, Nullable,
   Raylib;
 
 type
@@ -28,6 +28,7 @@ type
     function GetUp: Boolean;
   public
     class var Bindings: TJoystickBindings;
+    class var GamepadIndex: TNullable<Integer>;
     { The built-in bindings, also what an absent config setting falls back to. }
     class procedure ResetBindings; static;
     { True while the key bound to AControl is held. An unbound control (its
@@ -94,40 +95,46 @@ begin
   Bindings[AControl] := AKey;
 end;
 
-function TJoystick.GetDown: Boolean;
-begin
-  Result := IsDown(jcDown);
-end;
-
-function TJoystick.GetFire1: Boolean;
-begin
-  Result := IsDown(jcFire1);
-end;
-
-function TJoystick.GetFire2: Boolean;
-begin
-  Result := IsDown(jcFire2);
-end;
-
 function TJoystick.GetKeys: TArray<TKeyboardKey>;
 begin
   Result := [Bindings[jcLeft], Bindings[jcRight], Bindings[jcUp],
     Bindings[jcDown], Bindings[jcFire1], Bindings[jcFire2]];
 end;
 
+function TJoystick.GetDown: Boolean;
+begin
+  Result := IsDown(jcDown);
+  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex.Value, GAMEPAD_BUTTON_LEFT_FACE_DOWN));
+end;
+
+function TJoystick.GetFire1: Boolean;
+begin
+  Result := IsDown(jcFire1);
+  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+end;
+
+function TJoystick.GetFire2: Boolean;
+begin
+  Result := IsDown(jcFire2);
+  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_RIGHT_FACE_LEFT));
+end;
+
 function TJoystick.GetLeft: Boolean;
 begin
   Result := IsDown(jcLeft);
+  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_LEFT_FACE_LEFT));
 end;
 
 function TJoystick.GetRight: Boolean;
 begin
   Result := IsDown(jcRight);
+  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_LEFT_FACE_RIGHT));
 end;
 
 function TJoystick.GetUp: Boolean;
 begin
   Result := IsDown(jcUp);
+  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_LEFT_FACE_UP));
 end;
 
 function TKempstonJoystick.Poll(APort: Word): Byte;

@@ -1038,6 +1038,13 @@ begin
   if Machine.JoystickIndex >= Machine.Joysticks.Count then
     Machine.JoystickIndex := 0;
 
+  for I := 0 to 7 do
+    if IsGamepadAvailable(I) then
+    begin
+      TJoystick.GamepadIndex := I;
+      Break;
+    end;
+
   { Each binding falls back to the built-in one, written out the same way the
     config would have it, so an unreadable or absent setting costs that one
     control rather than the lot. }

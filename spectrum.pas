@@ -428,6 +428,9 @@ begin
 end;
 
 constructor TZXSpectrum48.Create;
+var
+  I: Integer;
+  Joy: TJoystick;
 begin
   with CPU do
   begin
@@ -457,8 +460,6 @@ begin
   Joysticks.Add(Nil); { No joystick }
   Joysticks.Add(TKempstonJoystick.Create);
   Joysticks.Add(TCursorJoystick.Create);
-
-  JoystickIndex := 1; { Kempston }
 
   Reset;
 end;
