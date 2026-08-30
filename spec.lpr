@@ -14,6 +14,8 @@ program Spec;
 uses
   Main;
 
+{$R *.res}
+
 begin
   with TApplication.Create(Nil) do
   begin
