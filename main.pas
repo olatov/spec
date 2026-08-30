@@ -114,6 +114,7 @@ type
     BorderT: Integer;
     CurrentFile: String;
     Aspect: Boolean;
+    Curvature: Single;
     Turbo: Boolean;
     property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
@@ -976,7 +977,6 @@ var
   I: Integer;
   Control: TJoystickControl;
   LinesCount: Single = 256;
-  Curvature: Single = 7.0;
 begin
   Palette := [
     GetColor($000000FF),
@@ -1024,6 +1024,7 @@ begin
   TVType := Config.ReadInteger('Display', 'TVType', TVTypeColor) mod Length(Shaders);
   Overscan := Config.ReadInteger('Display', 'Overscan', 16);
   Aspect := Config.ReadBool('Display', 'Aspect', True);
+  Curvature := Config.ReadFloat('Display', 'Curvature', 7.0);
   TapeSound := Config.ReadBool('Tape', 'Sound', True);
   Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
   Machine.OnTapeSaved := @TapeSaved;
@@ -1034,7 +1035,7 @@ begin
   SavePath := Config.ReadString('Files', 'SavePath', '');
   BrowsePath := SaveDir;
 
-  Machine.JoystickIndex := Config.ReadInteger('Joystick', 'Index', 2);
+  Machine.JoystickIndex := Config.ReadInteger('Joystick', 'Index', 1);
   if Machine.JoystickIndex >= Machine.Joysticks.Count then
     Machine.JoystickIndex := 0;
 
@@ -1533,8 +1534,19 @@ begin
 end;
 
 procedure TApplication.HandleInput;
+var
+  Filename: String;
 begin
   if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
+
+  if IsKeyPressed(KEY_SCROLL_LOCK) then
+  begin
+    Filename := TPath.GetFileNameWithoutExtension(CurrentFile);
+    if Filename.IsEmpty then Filename := 'screen';
+    Filename := Filename + '.png';
+    ExportImage(Image, PChar(Filename));
+    SetOSD(PChar('Saved ' + Filename));
+  end;
 
   if Assigned(Menu) then
   begin
@@ -1768,6 +1780,7 @@ begin
   Config.WriteInteger('Display', 'TVType', TVType);
   Config.WriteInteger('Display', 'Overscan', Overscan);
   Config.WriteBool('Display', 'Aspect', Aspect);
+  Config.WriteFloat('Display', 'Curvature', Curvature);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
   Config.WriteBool('Audio', 'Muted', Muted);

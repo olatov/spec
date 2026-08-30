@@ -11,7 +11,7 @@ uses
   Raylib, OSDMenu;
 
 const
-  DefaultItemIndex = 3;
+  DefaultItemIndex = 4;
 
 type
   TCatalogItem = record

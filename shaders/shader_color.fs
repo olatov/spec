@@ -8,6 +8,9 @@ uniform float lines;          // Number of scanlines in the source image (e.g. 2
 uniform float curvature;      // Barrel distortion strength; higher = flatter (e.g. 6.0)
 
 vec2 curveUV(vec2 uv) {
+    if (curvature <= 0.0) {
+        return uv;
+    }
     uv = uv * 2.0 - 1.0;
     vec2 offset = uv.yx / curvature;
     uv += uv * offset * offset;
