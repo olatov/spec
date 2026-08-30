@@ -34,7 +34,7 @@ uses
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
   {$ifdef USE_DELAY} Utils, {$endif}
-  Z80, Spectrum, OSDMenu, Keyboards, Catalogs;
+  Z80, Spectrum, OSDMenu, Keyboards, Joysticks, Catalogs;
 
 type
   TSimpleTimer = record
@@ -56,6 +56,8 @@ type
     end;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
+    procedure AddControlsPage(AParent: TMenuItem);
+    procedure RefreshControls(APage: TMenuItem);
     function LoadFont: TFont;
     function LoadKeyboardTexture: TTexture2D;
     function LoadStream(const AFilename: String; AStream: TStream; out
@@ -972,6 +974,7 @@ procedure TApplication.Initialize;
 
 var
   I: Integer;
+  Control: TJoystickControl;
   LinesCount: Single = 256;
   Curvature: Single = 7.0;
 begin
@@ -1034,6 +1037,14 @@ begin
   Machine.JoystickIndex := Config.ReadInteger('Joystick', 'Index', 2);
   if Machine.JoystickIndex >= Machine.Joysticks.Count then
     Machine.JoystickIndex := 0;
+
+  { Each binding falls back to the built-in one, written out the same way the
+    config would have it, so an unreadable or absent setting costs that one
+    control rather than the lot. }
+  for Control := Low(TJoystickControl) to High(TJoystickControl) do
+    TJoystick.Bindings[Control] := TKeyboard.KeyFromId(
+      Config.ReadString('Joystick', JoystickControlNames[Control],
+        TKeyboard.KeyId[TJoystick.Bindings[Control]]));
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
@@ -1299,6 +1310,8 @@ begin
       Sender.Value := Machine.JoystickName;
     end);
 
+  AddControlsPage(Result.Root);
+
   Result.Root.AddItem('TV-set', TVTypeNames[TVType],
     procedure(Sender: TMenuItem)
     begin
@@ -1346,6 +1359,56 @@ begin
     begin
       QuitRequested := True;
     end);
+end;
+
+{ The joystick bindings, one line each, every line a page that waits for the
+  key to bind. The control a line stands for is in its Data, so one handler
+  serves all six. }
+procedure TApplication.AddControlsPage(AParent: TMenuItem);
+var
+  Page, Item: TMenuItem;
+  Control: TJoystickControl;
+begin
+  Page := AParent.AddItem('Controls');
+
+  for Control := Low(TJoystickControl) to High(TJoystickControl) do
+  begin
+    Item := Page.AddKey(JoystickControlNames[Control],
+      $'Press the key for {JoystickControlNames[Control]}:',
+      procedure(Sender: TKeyMenuItem; AKey: TKeyboardKey)
+      begin
+        TJoystick.Bind(TJoystickControl(StrToInt(Sender.Data)), AKey);
+        { Bind may have taken the key off whichever control had it before, so
+          the whole page is refreshed rather than just this line. }
+        RefreshControls(Sender.Parent);
+      end);
+    Item.Data := IntToStr(Ord(Control));
+  end;
+
+  Page.AddItem('Defaults', '',
+    procedure(Sender: TMenuItem)
+    begin
+      TJoystick.ResetBindings;
+      RefreshControls(Sender.Parent);
+    end);
+
+  RefreshControls(Page);
+end;
+
+{ Puts the bindings as they now stand back on the page's lines - both what the
+  list shows and what each capture page shows while it waits. }
+procedure TApplication.RefreshControls(APage: TMenuItem);
+var
+  I: Integer;
+  Item: TMenuItem;
+begin
+  for I := 0 to APage.Items.Count - 1 do
+  begin
+    Item := APage.Items[I];
+    if Item is TKeyMenuItem then
+      Item.Value := TKeyboard.KeyName[
+        TJoystick.Bindings[TJoystickControl(StrToInt(Item.Data))]];
+  end;
 end;
 
 { Opens the menu, which is also what pauses the machine. ACatalog starts it on
@@ -1683,6 +1746,8 @@ begin
 end;
 
 procedure TApplication.SaveConfig;
+var
+  Control: TJoystickControl;
 begin
   if not Assigned(Config) then Exit;
 
@@ -1704,6 +1769,10 @@ begin
   Config.WriteBool('Tape', 'Save', Machine.SaveToWav);
 
   Config.WriteInteger('Joystick', 'Index', Machine.JoystickIndex);
+
+  for Control := Low(TJoystickControl) to High(TJoystickControl) do
+    Config.WriteString('Joystick', JoystickControlNames[Control],
+      TKeyboard.KeyId[TJoystick.Bindings[Control]]);
 end;
 
 { Paints every border pixel the beam has swept between BorderT and AT in the

@@ -9,6 +9,14 @@ uses
   Raylib;
 
 type
+  { The six things a joystick can report. }
+  TJoystickControl = (jcLeft, jcRight, jcUp, jcDown, jcFire1, jcFire2);
+  TJoystickBindings = array[TJoystickControl] of TKeyboardKey;
+
+  { The interface a game reads its stick through. Which host keys stand for the
+    stick is not part of that - the player has one set of movement keys, and
+    switching between a Kempston and a Cursor interface must not change them -
+    so the bindings are shared by every joystick rather than owned by one. }
   TJoystick = class abstract
   private
     function GetDown: Boolean;
@@ -19,8 +27,15 @@ type
     function GetRight: Boolean;
     function GetUp: Boolean;
   public
-    LeftKey, RightKey, UpKey, DownKey, Fire1Key, Fire2Key: TKeyboardKey;
-    constructor Create; virtual;
+    class var Bindings: TJoystickBindings;
+    { The built-in bindings, also what an absent config setting falls back to. }
+    class procedure ResetBindings; static;
+    { True while the key bound to AControl is held. An unbound control (its
+      binding cleared to KEY_NULL) is never down. }
+    class function IsDown(AControl: TJoystickControl): Boolean; static;
+    { Clears every other control bound to AKey, so one keystroke can never
+      mean two directions at once. }
+    class procedure Bind(AControl: TJoystickControl; AKey: TKeyboardKey); static;
     function Poll(APort: Word): Byte; virtual; abstract;
     property Left: Boolean read GetLeft;
     property Right: Boolean read GetRight;
@@ -37,59 +52,82 @@ type
 
   TCursorJoystick = class(TJoystick)
     function Poll(APort: Word): Byte; override;
-    constructor Create; override;
   end;
+
+const
+  { Both the label a binding is shown under and the config key it is written
+    as - a name here is part of the config format. }
+  JoystickControlNames: array[TJoystickControl] of String =
+    ('Left', 'Right', 'Up', 'Down', 'Fire1', 'Fire2');
 
 implementation
 
+class procedure TJoystick.ResetBindings; static;
+begin
+  Bindings[jcLeft] := KEY_LEFT;
+  Bindings[jcRight] := KEY_RIGHT;
+  Bindings[jcUp] := KEY_UP;
+  Bindings[jcDown] := KEY_DOWN;
+  {$ifdef Darwin}
+    Bindings[jcFire1] := KEY_LEFT_SUPER;
+    Bindings[jcFire2] := KEY_RIGHT_SUPER;
+  {$else}
+    Bindings[jcFire1] := KEY_LEFT_ALT;
+    Bindings[jcFire2] := KEY_RIGHT_ALT;
+  {$endif}
+end;
+
+class function TJoystick.IsDown(AControl: TJoystickControl): Boolean; static;
+begin
+  Result := (Bindings[AControl] <> KEY_NULL) and IsKeyDown(Bindings[AControl]);
+end;
+
+class procedure TJoystick.Bind(AControl: TJoystickControl; AKey: TKeyboardKey); static;
+var
+  Control: TJoystickControl;
+begin
+  if AKey <> KEY_NULL then
+    for Control := Low(TJoystickControl) to High(TJoystickControl) do
+      if (Control <> AControl) and (Bindings[Control] = AKey) then
+        Bindings[Control] := KEY_NULL;
+
+  Bindings[AControl] := AKey;
+end;
+
 function TJoystick.GetDown: Boolean;
 begin
-  Result := IsKeyDown(DownKey);
+  Result := IsDown(jcDown);
 end;
 
 function TJoystick.GetFire1: Boolean;
 begin
-  Result := IsKeyDown(Fire1Key);
+  Result := IsDown(jcFire1);
 end;
 
 function TJoystick.GetFire2: Boolean;
 begin
-  Result := IsKeyDown(Fire2Key);
+  Result := IsDown(jcFire2);
 end;
 
 function TJoystick.GetKeys: TArray<TKeyboardKey>;
 begin
-  Result := [LeftKey, RightKey, UpKey, DownKey, Fire1Key, Fire2Key];
+  Result := [Bindings[jcLeft], Bindings[jcRight], Bindings[jcUp],
+    Bindings[jcDown], Bindings[jcFire1], Bindings[jcFire2]];
 end;
 
 function TJoystick.GetLeft: Boolean;
 begin
-  Result := IsKeyDown(LeftKey);
+  Result := IsDown(jcLeft);
 end;
 
 function TJoystick.GetRight: Boolean;
 begin
-  Result := IsKeyDown(RightKey);
+  Result := IsDown(jcRight);
 end;
 
 function TJoystick.GetUp: Boolean;
 begin
-  Result := IsKeyDown(UpKey);
-end;
-
-constructor TJoystick.Create;
-begin
-  LeftKey := KEY_LEFT;
-  RightKey := KEY_RIGHT;
-  UpKey := KEY_UP;
-  DownKey := KEY_DOWN;
-  {$ifdef Darwin}
-    Fire1Key := KEY_LEFT_SUPER;
-    Fire2Key := KEY_RIGHT_SUPER;
-  {$else}
-    Fire1Key := KEY_LEFT_ALT;
-    Fire2Key := KEY_RIGHT_ALT;
-  {$endif}
+  Result := IsDown(jcUp);
 end;
 
 function TKempstonJoystick.Poll(APort: Word): Byte;
@@ -123,11 +161,7 @@ begin
   Result := not Result;
 end;
 
-constructor TCursorJoystick.Create;
-begin
-  inherited Create;
-  Fire2Key := KEY_NULL;
-end;
+initialization
+  TJoystick.ResetBindings;
 
 end.
-

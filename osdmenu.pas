@@ -13,10 +13,12 @@ type
   TMenuItem = class;
   TEditMenuItem = class;
   TFileMenuItem = class;
+  TKeyMenuItem = class;
   TMenuNotify = reference to procedure(ASender: TMenu; AQuit: Boolean);
   TMenuItemNotify = reference to procedure(ASender: TMenuItem);
   TMenuEditNotify = reference to procedure(ASender: TEditMenuItem);
   TMenuBrowseNotify = reference to procedure(ASender: TFileMenuItem);
+  TMenuKeyNotify = reference to procedure(ASender: TKeyMenuItem; AKey: TKeyboardKey);
 
   { One entry in the menu, and - for items that have children or are a dialog -
     also the page that entry opens. The menu shows exactly one item's page at a
@@ -45,6 +47,8 @@ type
       TEditMenuItem;
     function AddBrowser(AText: String; APath: String; AOnBrowse: TMenuBrowseNotify):
       TFileMenuItem;
+    function AddKey(AText: String; APrompt: String; AOnCapture: TMenuKeyNotify):
+      TKeyMenuItem;
     { Chosen from the parent page: plain items just run OnApply, items that
       have children take over the screen. }
     procedure Apply; virtual;
@@ -102,6 +106,20 @@ type
     procedure Browse(const APath: String);
     procedure AfterInput; override;
     procedure Render(ATop: Integer); override;
+  end;
+
+  { A page that waits for a single keystroke and hands it to its owner - how a
+    binding is re-taught. Value is the binding as it stands, which the owner
+    refreshes from OnCapture. ESC leaves it alone; DEL clears it, since a key
+    that means "no key" is the one thing no keystroke can say. }
+  TKeyMenuItem = class(TMenuItem)
+  public
+    Prompt: String;
+    OnCapture: TMenuKeyNotify;
+    procedure Apply; override;
+    procedure HandleInput; override;
+    procedure Render(ATop: Integer); override;
+    function Footer: String; override;
   end;
 
   TRootMenuItem = class(TMenuItem)
@@ -245,6 +263,16 @@ begin
   Result.Text := AText;
   Result.Path := APath;
   Result.OnBrowse := AOnBrowse;
+  Items.Add(Result);
+end;
+
+function TMenuItem.AddKey(AText: String; APrompt: String; AOnCapture: TMenuKeyNotify): TKeyMenuItem;
+begin
+  Result := TKeyMenuItem.Create(Self);
+  Result.Font := Font;
+  Result.Text := AText;
+  Result.Prompt := APrompt;
+  Result.OnCapture := AOnCapture;
   Items.Add(Result);
 end;
 
@@ -484,6 +512,49 @@ begin
     DrawTextEx(Font, PChar(Warning), [MenuLeft, ATop + 24], 20, 0, RED);
 
   inherited Render(ATop + 52);
+end;
+
+procedure TKeyMenuItem.Apply;
+begin
+  if Assigned(OnApply) then OnApply(Self);
+  Menu.Show(Self);
+  { The ENTER that opened this page is still in the key queue, and this page
+    binds whatever it finds there - so it is dropped, along with anything else
+    typed before the page was asked for. }
+  while GetKeyPressed <> KEY_NULL do ;
+end;
+
+procedure TKeyMenuItem.HandleInput;
+var
+  Key: TKeyboardKey;
+begin
+  if IsKeyPressed(KEY_ESCAPE) then
+  begin
+    Menu.Back;
+    Exit;
+  end;
+
+  Key := GetKeyPressed;
+  if Key = KEY_NULL then Exit;
+
+  { DEL is the one keystroke that stands for no key rather than for itself. }
+  if Key = KEY_DELETE then Key := KEY_NULL;
+
+  { OnCapture may free this item along with the page it belongs to, so Back
+    is the only thing allowed after it. }
+  if Assigned(OnCapture) then OnCapture(Self, Key);
+  Menu.Back;
+end;
+
+procedure TKeyMenuItem.Render(ATop: Integer);
+begin
+  DrawTextEx(Font, PChar(Prompt), [MenuLeft, ATop], MenuTextSize, 0, ORANGE);
+  DrawTextEx(Font, PChar(Value), [MenuLeft, ATop + 48], 32, 0, YELLOW);
+end;
+
+function TKeyMenuItem.Footer: String;
+begin
+  Result := 'Press a key    DEL - Clear    ESC - Cancel';
 end;
 
 constructor TRootMenuItem.Create(AParent: TMenu);

@@ -16,6 +16,7 @@ type
     function GetBreakSpaceKey: TKeyboardKey;
     function GetCapsShiftKey: TKeyboardKey;
     class function GetKeyName(AKey: TKeyboardKey): String; static;
+    class function GetKeyId(AKey: TKeyboardKey): String; static;
     function GetSymbolShiftKey: TKeyboardKey;
   public
     SymbolShiftKeys: TArray<TKeyboardKey>;
@@ -26,6 +27,10 @@ type
     property CapsShiftKey: TKeyboardKey read GetCapsShiftKey;
     property BreakSpaceKey: TKeyboardKey read GetBreakSpaceKey;
     class property KeyName[AKey: TKeyboardKey]: String read GetKeyName;
+    { The same key written the way the config stores it - stable across
+      keyboard layouts, unlike KeyName, and read back by KeyFromId. }
+    class property KeyId[AKey: TKeyboardKey]: String read GetKeyId;
+    class function KeyFromId(const AId: String): TKeyboardKey; static;
     class function GetKeyNames(AKeys: TArray<TKeyboardKey>): TStringArray;
     { A key still held when the OSD menu closed was meant for the menu, not for
       the machine - which starts running again that very frame, in time to read
@@ -40,6 +45,91 @@ type
 
 implementation
 
+type
+  TNamedKey = record
+    Key: TKeyboardKey;
+    Name: String;
+  end;
+
+const
+  { Every key that does not name itself by the character it types. The table is
+    read both ways - it labels a key on screen, and it is what a key binding is
+    written as in the config - so a name here is part of the config format and
+    has to stay put. }
+  NamedKeys: array[0..51] of TNamedKey = (
+    (Key: KEY_ESCAPE;        Name: 'Esc'),
+    (Key: KEY_ENTER;         Name: 'Enter'),
+    (Key: KEY_SPACE;         Name: 'Space'),
+    (Key: KEY_BACKSPACE;     Name: 'Backspace'),
+    (Key: KEY_TAB;           Name: 'Tab'),
+    (Key: KEY_INSERT;        Name: 'Ins'),
+    (Key: KEY_DELETE;        Name: 'Del'),
+    (Key: KEY_HOME;          Name: 'Home'),
+    (Key: KEY_END;           Name: 'End'),
+    (Key: KEY_PAGE_UP;       Name: 'PgUp'),
+    (Key: KEY_PAGE_DOWN;     Name: 'PgDn'),
+    (Key: KEY_CAPS_LOCK;     Name: 'Caps Lock'),
+    (Key: KEY_LEFT;          Name: 'Left'),
+    (Key: KEY_RIGHT;         Name: 'Right'),
+    (Key: KEY_UP;            Name: 'Up'),
+    (Key: KEY_DOWN;          Name: 'Down'),
+    (Key: KEY_LEFT_SHIFT;    Name: 'Left SHIFT'),
+    (Key: KEY_RIGHT_SHIFT;   Name: 'Right SHIFT'),
+    (Key: KEY_LEFT_CONTROL;  Name: 'Left CTRL'),
+    (Key: KEY_RIGHT_CONTROL; Name: 'Right CTRL'),
+    {$ifdef Darwin}
+      (Key: KEY_LEFT_ALT;    Name: 'Left OPT'),
+      (Key: KEY_RIGHT_ALT;   Name: 'Right OPT'),
+      (Key: KEY_LEFT_SUPER;  Name: 'Left CMD'),
+      (Key: KEY_RIGHT_SUPER; Name: 'Right CMD'),
+    {$else}
+      (Key: KEY_LEFT_ALT;    Name: 'Left ALT'),
+      (Key: KEY_RIGHT_ALT;   Name: 'Right ALT'),
+      (Key: KEY_LEFT_SUPER;  Name: 'Left SUPER'),
+      (Key: KEY_RIGHT_SUPER; Name: 'Right SUPER'),
+    {$endif}
+    (Key: KEY_F1;            Name: 'F1'),
+    (Key: KEY_F2;            Name: 'F2'),
+    (Key: KEY_F3;            Name: 'F3'),
+    (Key: KEY_F4;            Name: 'F4'),
+    (Key: KEY_F5;            Name: 'F5'),
+    (Key: KEY_F6;            Name: 'F6'),
+    (Key: KEY_F7;            Name: 'F7'),
+    (Key: KEY_F8;            Name: 'F8'),
+    (Key: KEY_F9;            Name: 'F9'),
+    (Key: KEY_F10;           Name: 'F10'),
+    (Key: KEY_F11;           Name: 'F11'),
+    (Key: KEY_F12;           Name: 'F12'),
+    (Key: KEY_KP_0;          Name: 'Pad 0'),
+    (Key: KEY_KP_1;          Name: 'Pad 1'),
+    (Key: KEY_KP_2;          Name: 'Pad 2'),
+    (Key: KEY_KP_3;          Name: 'Pad 3'),
+    (Key: KEY_KP_4;          Name: 'Pad 4'),
+    (Key: KEY_KP_5;          Name: 'Pad 5'),
+    (Key: KEY_KP_6;          Name: 'Pad 6'),
+    (Key: KEY_KP_7;          Name: 'Pad 7'),
+    (Key: KEY_KP_8;          Name: 'Pad 8'),
+    (Key: KEY_KP_9;          Name: 'Pad 9'),
+    (Key: KEY_KP_DECIMAL;    Name: 'Pad .'),
+    (Key: KEY_KP_DIVIDE;     Name: 'Pad /'),
+    (Key: KEY_KP_MULTIPLY;   Name: 'Pad *'),
+    (Key: KEY_KP_SUBTRACT;   Name: 'Pad -'),
+    (Key: KEY_KP_ADD;        Name: 'Pad +'),
+    (Key: KEY_KP_ENTER;      Name: 'Pad Enter'));
+
+  { What an unbound control reads as, in the config and on screen. }
+  NoKeyId = 'None';
+
+{ The table entry for AKey, or -1 if the key names itself. }
+function FindNamedKey(AKey: TKeyboardKey): Integer;
+var
+  Index: Integer;
+begin
+  for Index := Low(NamedKeys) to High(NamedKeys) do
+    if NamedKeys[Index].Key = AKey then Exit(Index);
+  Result := -1;
+end;
+
 function TKeyboard.GetBreakSpaceKey: TKeyboardKey;
 begin
   Result := if Length(BreakSpaceKeys) > 0 then BreakSpaceKeys[0] else KEY_NULL;
@@ -51,34 +141,57 @@ begin
 end;
 
 class function TKeyboard.GetKeyName(AKey: TKeyboardKey): String; static;
+var
+  Index: Integer;
 begin
-  case AKey of
-    KEY_ESCAPE: Result := 'Esc';
-    KEY_ENTER: Result := 'Enter';
-    KEY_SPACE: Result := 'Space';
-    KEY_BACKSPACE: Result := 'Backspace';
-    KEY_LEFT: Result := 'Left';
-    KEY_RIGHT: Result := 'Right';
-    KEY_UP: Result := 'Up';
-    KEY_DOWN: Result := 'Down';
-    KEY_LEFT_SHIFT: Result := 'Left SHIFT';
-    KEY_RIGHT_SHIFT: Result := 'Right SHIFT';
-    KEY_LEFT_CONTROL: Result := 'Left CTRL';
-    KEY_RIGHT_CONTROL: Result := 'Right CTRL';
-    {$ifdef Darwin}
-      KEY_LEFT_ALT: Result := 'Left OPT';
-      KEY_RIGHT_ALT: Result := 'Right OPT';
-      KEY_LEFT_SUPER: Result := 'Left CMD';
-      KEY_RIGHT_SUPER: Result := 'Right CMD';
-    {$else}
-      KEY_LEFT_ALT: Result := 'Left ALT';
-      KEY_RIGHT_ALT: Result := 'Right ALT';
-    {$endif}
+  Index := FindNamedKey(AKey);
+  if Index >= 0 then
+    Result := NamedKeys[Index].Name
   else
+    { Whatever this key types on the layout in use, which is the name worth
+      showing even though it is not the one worth storing. }
     Result := Raylib.GetKeyName(AKey);
-  end;
+
+  if Result.IsEmpty then Result := KeyId[AKey];
 
   Result := Result.ToUpper;
+end;
+
+class function TKeyboard.GetKeyId(AKey: TKeyboardKey): String; static;
+var
+  Index: Integer;
+begin
+  Index := FindNamedKey(AKey);
+  if Index >= 0 then
+    Result := NamedKeys[Index].Name
+  else if (AKey > 32) and (AKey < 127) then
+    { raylib's key codes are the ASCII ones for the keys that type a character,
+      so the character is the key's own name. }
+    Result := Chr(AKey)
+  else if AKey = KEY_NULL then
+    Result := NoKeyId
+  else
+    { Nothing readable to fall back on - a key nobody is likely to bind, kept
+      round-trippable rather than dropped. }
+    Result := '#' + IntToStr(AKey);
+end;
+
+class function TKeyboard.KeyFromId(const AId: String): TKeyboardKey; static;
+var
+  Id: String;
+  Index: Integer;
+begin
+  Id := AId.Trim;
+  Result := KEY_NULL;
+  if Id.IsEmpty or SameText(Id, NoKeyId) then Exit;
+
+  for Index := Low(NamedKeys) to High(NamedKeys) do
+    if SameText(Id, NamedKeys[Index].Name) then Exit(NamedKeys[Index].Key);
+
+  if Length(Id) = 1 then
+    Result := Ord(UpCase(Id[1]))
+  else if Id.StartsWith('#') then
+    Result := StrToIntDef(Id.Substring(1), KEY_NULL);
 end;
 
 function TKeyboard.GetSymbolShiftKey: TKeyboardKey;
