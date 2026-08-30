@@ -30,10 +30,11 @@ unit main;
 interface
 
 uses
+  {$ifdef mswindows} Windows, {$endif}
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
   {$ifdef USE_DELAY} Utils, {$endif}
-  Z80, Spectrum, OSDMenu, Keyboards {$ifdef INCLUDE_CATALOG}, Catalogs {$endif};
+  Z80, Spectrum, OSDMenu, Keyboards, Catalogs;
 
 type
   TApplication = class(TComponent)
@@ -42,15 +43,15 @@ type
     Config: TIniFile;
     FMuted: Boolean;
     FTapeAutoLoad: Boolean;
-    {$ifdef INCLUDE_CATALOG}
-      FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
-    {$endif}
+    FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
     FAutoLoad: record
       Active: Boolean;
       Frame: Integer;
     end;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
+    function LoadStream(const AFilename: String; AStream: TStream; out
+      AError: String): Boolean;
     procedure OpenMenu(ACatalog: Boolean = False);
     function GetPaused: Boolean;
     procedure SetMuted(AValue: Boolean);
@@ -102,6 +103,7 @@ type
     QuitRequested: Boolean;
     BorderT: Integer;
     CurrentFile: String;
+    Turbo: Boolean;
     property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
       down in real time, so it is filled in lazily: whenever the colour is
@@ -694,30 +696,39 @@ end;
   happened to be running. }
 function TApplication.LoadFile(const AFilename: String; out AError: String): Boolean;
 var
-  Extension: String;
-  Tape: Boolean;
+  Stream: TFileStream;
 begin
   Result := False;
-
   if not TFile.Exists(AFilename) then
   begin
     AError := 'File not found';
     Exit;
   end;
 
+  Stream := autofree TFile.OpenRead(AFilename);
+  Result := LoadStream(AFilename, Stream, AError);
+end;
+
+function TApplication.LoadStream(const AFilename: String; AStream: TStream; out AError: String): Boolean;
+var
+  Extension: String;
+  Tape: Boolean;
+begin
+  Result := False;
+
   Extension := TPath.GetExtension(AFilename).ToLower;
   Tape := (Extension = '.tap') or (Extension = '.wav');
 
   try
     if Extension = '.tap' then
-      Result := Machine.LoadTAP(AFilename)
+      Result := Machine.LoadTAP(AStream)
     else if Extension = '.wav' then
       { Real-time load: the ROM/turbo loader polls the EAR line; playback
         auto-starts (and auto-pauses between blocks) once LD-BYTES runs. }
-      Result := Machine.LoadWAV(AFilename)
+      Result := Machine.LoadWAV(AStream)
     else
     begin
-      Machine.LoadZ80(AFilename);
+      Machine.LoadZ80(AStream);
       CurrentFile := AFilename;
       Result := True;
     end;
@@ -847,23 +858,50 @@ begin
   OSD.Lifetime := GetTime + ADuration;
 end;
 
-constructor TApplication.Create(AOwner: TComponent);
+function LoadLib80: Boolean;
 var
+  SearchPaths: array of String = ('.', './lib');
   LibZ80Path: String;
+  SearchPath: String;
+
+  function TryLoad(AFileName: String): Boolean;
+  begin
+    try
+      TraceLog(LOG_INFO, PChar($'Trying {AFileName}'));
+      Result := LoadLibrary(AFileName);
+      if Result then
+        TraceLog(LOG_INFO, PChar($'Loaded {AFileName}'))
+      else
+        TraceLog(LOG_WARNING, PChar($'{AFileName} could not be loaded'));
+    except
+      on E: Exception do
+        TraceLog(LOG_ERROR, PChar($'Error loading {AFileName}: {E.Message}'));
+    end;
+  end;
+
+begin
+  LibZ80Path := GetEnvironmentVariable('LIBZ80_PATH');
+  if not LibZ80Path.IsEmpty then
+  begin
+    Result := TryLoad(LibZ80Path);
+    Exit;
+  end;
+
+  for SearchPath in SearchPaths do
+  begin
+    Result := TryLoad(SetDirSeparators(TPath.Combine(SearchPath, DefaultZ80LibPath)));
+    if Result then Exit;
+  end;
+end;
+
+constructor TApplication.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
 
-  LibZ80Path := GetEnvironmentVariable('LIBZ80_PATH');
-  if LibZ80Path.IsEmpty then
-    LibZ80Path := TPath.Combine('lib/', DefaultZ80LibPath);
+  SetTraceLogLevel(LOG_ERROR);
 
-  try
-    if not Z80.LoadLibrary(LibZ80Path) then
-      raise Exception.CreateFmt('Could not load %s', [LibZ80Path]);
-  except
-    on E: Exception do
-      raise Exception.CreateFmt('Failed to initialize libZ80: %s', [E.Message]);
-  end;
+  if not LoadLib80 then
+    raise Exception.Create('Fatal: unable to load Z80 library');
 
   Machine := TZXSpectrum48.Create;
   Config := TIniFile.Create(GetAppConfigFile(False));
@@ -927,8 +965,6 @@ var
   LinesCount: Single = 256;
   Curvature: Single = 7.0;
 begin
-  SetTraceLogLevel(LOG_ERROR);
-
   Palette := [
     GetColor($000000FF),
     GetColor($0000D8FF),
@@ -1092,7 +1128,7 @@ begin
 
     DrawTexturePro(
       Target.Texture,
-      RectangleCreate(Overscan, Overscan, Target.texture.width - (2 * Overscan
+      RectangleCreate(Overscan * 1.33, Overscan, Target.texture.width - (2.66 * Overscan
         ), - Target.texture.height + (2 * Overscan)),
       Dest,
       Vector2Zero, 0, WHITE);
@@ -1105,7 +1141,7 @@ begin
         Menu.Texture,
         RectangleCreate(0, 0, Menu.Texture.width, -Menu.Texture.height),
         Dest,
-        Vector2Zero, 0, ColorAlpha(WHITE, 0.975));
+        Vector2Zero, 0, WHITE);
     end else
     if ShowKeyboard then
     begin
@@ -1178,7 +1214,6 @@ begin
       Sender.Menu.Close;
     end);
 
-  {$ifdef INCLUDE_CATALOG}
     { The Catalog page is built from the list, and every entry on it carries its
       own path - so one handler serves all of them, and it is the browser's Open
       handler with the folders left out. }
@@ -1188,8 +1223,15 @@ begin
         procedure(Sender: TMenuItem)
         var
           Error: String;
+          Stream: TStream;
         begin
-          if LoadFile(Sender.Data, Error) then
+          {$ifdef EMBED_CATALOG}
+            Stream := autofree TResourceStream.Create(
+              HINSTANCE, 'GAME_' + TPath.GetFileName(Sender.Data), RT_RCDATA);
+          {$else}
+            Stream := TFile.OpenRead(Sender.Data);
+          {$endif}
+          if LoadStream(Sender.Data, Stream, Error) then
           begin
             SetOSD($'Loaded {Sender.Text}');
             Sender.Menu.Close;   { frees Sender - nothing may follow }
@@ -1197,7 +1239,6 @@ begin
           else
             Sender.Parent.Warning := Error;
         end);
-  {$endif}
 
   Result.Root.AddBrowser('Load', BrowsePath,
     procedure(Sender: TFileMenuItem)
@@ -1290,10 +1331,8 @@ begin
       PrimeAudio;
     end;
 
-  {$ifdef INCLUDE_CATALOG}
-    { An empty catalog has no page to show, and Show ignores it. }
-    if ACatalog then Menu.Show(FCatalogPage);
-  {$endif}
+  { An empty catalog has no page to show, and Show ignores it. }
+  if ACatalog then Menu.Show(FCatalogPage);
 end;
 
 function TApplication.GetPaused: Boolean;
@@ -1354,12 +1393,10 @@ begin
     PrimeAudio;
   end;
 
-  {$ifdef INCLUDE_CATALOG}
-    { Nothing asked for on the command line and something to offer: the session
-      starts at the catalog rather than at a bare BASIC prompt. A file that was
-      asked for and failed does not - its error is what the screen has to say. }
-    if not Requested and not Catalog.IsEmpty then OpenMenu(True);
-  {$endif}
+  { Nothing asked for on the command line and something to offer: the session
+    starts at the catalog rather than at a bare BASIC prompt. A file that was
+    asked for and failed does not - its error is what the screen has to say. }
+  if not Requested and not Catalog.IsEmpty then OpenMenu(True);
 
   SetExitKey(KEY_NULL);
 
@@ -1370,6 +1407,8 @@ begin
   while not (WindowShouldClose or QuitRequested) do
   begin
     RunFrame;
+    if Turbo then Continue;
+
     {$ifdef USE_DELAY}
       FrameTime := FrameTime + (1 / FPS);
 
@@ -1405,11 +1444,9 @@ begin
 
   if IsKeyPressed(KEY_F1) then OpenMenu;
 
-  {$ifdef INCLUDE_CATALOG}
-    { Straight to the catalog, skipping the top page. Nothing to show means
-      nothing happens, rather than the menu opening on something else. }
-    if IsKeyPressed(KEY_TAB) and not Catalog.IsEmpty then OpenMenu(True);
-  {$endif}
+  { Straight to the catalog, skipping the top page. Nothing to show means
+    nothing happens, rather than the menu opening on something else. }
+  if IsKeyPressed(KEY_TAB) and not Catalog.IsEmpty then OpenMenu(True);
 
   if IsKeyPressed(KEY_SCROLL_LOCK) then
   begin
@@ -1419,6 +1456,8 @@ begin
     ExportImage(Image, PChar(Filename));
     SetOSD('Saved ' + Filename);
   end;
+
+  Turbo := IsKeyDown(KEY_GRAVE);
 
   if IsKeyPressed(KEY_F11) then
   begin

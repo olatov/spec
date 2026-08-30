@@ -156,7 +156,9 @@ type
       playback auto-starts when a load begins. The ROM (or a turbo loader)
       times the edges itself. Returns False if the file isn't a usable PCM
       WAV or decodes to no signal. }
+    function LoadTAP(const AStream: TStream): Boolean;
     function LoadWAV(const AFilename: String): Boolean;
+    function LoadWAV(const AStream: TStream): Boolean;
     procedure TapePlay;
     procedure TapePause;
     procedure TapeStop;   { pause and rewind to the start }
@@ -234,7 +236,7 @@ end;
 
 function IllegalCallback(cpu: PZ80; opcode: UInt8): UInt8; cdecl;
 begin
-  Result := 0;
+  raise Exception.CreateFmt('Illegal opcode %d; PC: %d', [Opcode, CPU^.pc.word]);
 end;
 
 procedure LDIACallback(Context: Pointer); cdecl;
@@ -754,6 +756,14 @@ end;
 function TZXSpectrum48.LoadTAP(const AFilename: String): Boolean;
 var
   FS: TFileStream;
+begin
+  if not TFile.Exists(AFilename) then Exit;
+  FS := autofree TFile.OpenRead(AFilename);
+  Result := LoadTAP(FS);
+end;
+
+function TZXSpectrum48.LoadTAP(const AStream: TStream): Boolean;
+var
   LenLo, LenHi: Byte;
   Len: Word;
   Block: TBytes;
@@ -763,17 +773,14 @@ begin
   FTapeLoaded := False;
   Result := False;
 
-  if not TFile.Exists(AFilename) then Exit;
-
-  FS := autofree TFile.OpenRead(AFilename);
-  while FS.Position < FS.Size do
+  while AStream.Position < AStream.Size do
   begin
-    if (FS.Read(LenLo, 1) <> 1) or (FS.Read(LenHi, 1) <> 1) then Break;
+    if (AStream.Read(LenLo, 1) <> 1) or (AStream.Read(LenHi, 1) <> 1) then Break;
     Len := LenLo or (Word(LenHi) shl 8);
     if Len = 0 then Continue;
 
     SetLength(Block, Len);
-    if FS.Read(Block[0], Len) <> Len then Break;
+    if AStream.Read(Block[0], Len) <> Len then Break;
 
     SetLength(FTapeBlocks, Length(FTapeBlocks) + 1);
     FTapeBlocks[High(FTapeBlocks)] := Block;
@@ -845,8 +852,11 @@ begin
           end;
       end;
 
+      {$push}
+      {$R-}
       CPU.ix_iy[0].word := CPU.ix_iy[0].word + ActualLen;
       CPU.de.word := RequestedLen - ActualLen;
+      {$pop}
 
       Ok := (ActualLen = RequestedLen) and (IsLoad or Ok);
     end;
@@ -1202,7 +1212,16 @@ end;
 
 function TZXSpectrum48.LoadWAV(const AFilename: String): Boolean;
 var
-  FS: TFileStream;
+  Stream: TFileStream;
+begin
+  Result := False;
+  if not TFile.Exists(AFilename) then Exit;
+  Stream := autofree TFile.OpenRead(AFilename);
+  Result := LoadWAV(Stream);
+end;
+
+function TZXSpectrum48.LoadWAV(const AStream: TStream): Boolean;
+var
   ChunkID: array[0..3] of AnsiChar;
   ChunkSize: LongWord;
   AudioFormat, NumChannels, BitsPerSample, BlockAlign: Word;
@@ -1213,7 +1232,7 @@ var
 
   function ReadTag: String;
   begin
-    if FS.Read(ChunkID[0], 4) <> 4 then Exit('');
+    if AStream.Read(ChunkID[0], 4) <> 4 then Exit('');
     SetString(Result, PAnsiChar(@ChunkID[0]), 4);
   end;
 
@@ -1234,8 +1253,8 @@ var
     Count: Integer;
   begin
     SetLength(Raw, DataSize);
-    FS.Position := DataStart;
-    if DataSize > 0 then FS.ReadBuffer(Raw[0], DataSize);
+    AStream.Position := DataStart;
+    if DataSize > 0 then AStream.ReadBuffer(Raw[0], DataSize);
 
     BytesPerSample := BitsPerSample div 8;
     FrameCount := DataSize div BlockAlign;
@@ -1289,11 +1308,8 @@ begin
   FWavCursor := 0;
   SetLength(FWavEdges, 0);
 
-  if not TFile.Exists(AFilename) then Exit;
-
-  FS := autofree TFile.OpenRead(AFilename);
   if (ReadTag <> 'RIFF') then Exit;
-  FS.ReadDWord; { RIFF chunk size - ignored }
+  AStream.ReadDWord; { RIFF chunk size - ignored }
   if (ReadTag <> 'WAVE') then Exit;
 
   HaveFmt := False;
@@ -1302,32 +1318,32 @@ begin
   NumChannels := 0;
   BlockAlign := 0;
 
-  while FS.Position + 8 <= FS.Size do
+  while AStream.Position + 8 <= AStream.Size do
   begin
     Tag := ReadTag;
     if Length(Tag) < 4 then Break;
-    ChunkSize := FS.ReadDWord;
+    ChunkSize := AStream.ReadDWord;
 
     if Tag = 'fmt ' then
     begin
-      AudioFormat := FS.ReadWord;
-      NumChannels := FS.ReadWord;
-      SampleRate := FS.ReadDWord;
-      FS.ReadDWord;            { byte rate }
-      BlockAlign := FS.ReadWord;
-      BitsPerSample := FS.ReadWord;
+      AudioFormat := AStream.ReadWord;
+      NumChannels := AStream.ReadWord;
+      SampleRate := AStream.ReadDWord;
+      AStream.ReadDWord;            { byte rate }
+      BlockAlign := AStream.ReadWord;
+      BitsPerSample := AStream.ReadWord;
       HaveFmt := True;
-      if ChunkSize > 16 then FS.Position := FS.Position + (ChunkSize - 16);
+      if ChunkSize > 16 then AStream.Position := AStream.Position + (ChunkSize - 16);
     end
     else if Tag = 'data' then
     begin
-      DataStart := FS.Position;
+      DataStart := AStream.Position;
       DataSize := ChunkSize;
-      if DataStart + DataSize > FS.Size then DataSize := FS.Size - DataStart;
-      FS.Position := FS.Position + ChunkSize + (ChunkSize and 1);
+      if DataStart + DataSize > AStream.Size then DataSize := AStream.Size - DataStart;
+      AStream.Position := AStream.Position + ChunkSize + (ChunkSize and 1);
     end
     else
-      FS.Position := FS.Position + ChunkSize + (ChunkSize and 1);
+      AStream.Position := AStream.Position + ChunkSize + (ChunkSize and 1);
 
     if HaveFmt and (DataStart >= 0) then Break;
   end;

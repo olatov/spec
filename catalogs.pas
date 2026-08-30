@@ -6,6 +6,7 @@ unit Catalogs;
 interface
 
 uses
+  {$ifdef mswindows} Windows, {$endif}
   Classes, SysUtils, System.IOUtils, CsvDocument,
   Raylib, OSDMenu;
 
@@ -17,6 +18,8 @@ type
     function Path: String;
     function PicturePath: String;
     function HasPicture: Boolean;
+    function GetPictureStream: TMemoryStream;
+    function GetContentStream: TMemoryStream;
   end;
 
   TCatalog = class
@@ -35,6 +38,9 @@ type
     procedure LoadFromStream(AStream: TStream);
     procedure LoadFromText(const AText: String);
     procedure LoadFromFile(AFilename: String);
+    {$ifdef EMBED_CATALOG}
+      procedure LoadEmbedded;
+    {$endif}
   end;
 
   { The Catalog page: the titles down the left, the selected title's screen
@@ -63,8 +69,10 @@ var
   CatalogDir: String;   { resolved at startup - see the initialization }
 
 const
-  CatalogFolder = 'catalog';
-  CatalogFile = 'catalog.csv';
+  {$ifndef EMBED_CATALOG}
+    CatalogFolder = 'catalog';
+    CatalogFile = 'catalog.csv';
+  {$endif}
 
   { The page is one screen wide: a column of titles, then the picture. }
   CatalogListWidth = 292;
@@ -75,9 +83,11 @@ const
   CatalogPictureHeight = CatalogPictureWidth * 3 div 4;
   CatalogNameSize = 20;
 
-{$embedstr CatalogData 'catalog/catalog.csv'}
-
 implementation
+
+{$ifdef EMBED_CATALOG}
+  {$R catalog/catalog.rc}
+{$endif}
 
 { The menu's font carries plain ASCII and nothing else, so a title typed in a
   word processor - which quietly turns ' into a curly quote - would otherwise
@@ -111,10 +121,54 @@ begin
     TPath.GetFileNameWithoutExtension(Filename) + '.png');
 end;
 
+{$ifdef EMBED_CATALOG}
+function TCatalogItem.HasPicture: Boolean;
+var
+  Stream: TStream;
+begin
+  Stream := autofree GetPictureStream;
+  Result := Assigned(Stream);
+end;
+{$else}
 function TCatalogItem.HasPicture: Boolean;
 begin
   Result := TFile.Exists(PicturePath);
 end;
+{$endif}
+
+{$ifdef EMBED_CATALOG}
+function TCatalogItem.GetPictureStream: TMemoryStream;
+var
+  ResStream: TResourceStream;
+begin
+  ResStream := autofree TResourceStream.Create(HINSTANCE, 'PICTURE_' + Filename, RT_RCDATA);
+  Result := TMemoryStream.Create;
+  Result.CopyFrom(ResStream, ResStream.Size);
+end;
+{$else}
+function TCatalogItem.GetPictureStream: TMemoryStream;
+begin
+  Result := TMemoryStream.Create;
+  Result.LoadFromFile(PicturePath);
+end;
+{$endif}
+
+{$ifdef EMBED_CATALOG}
+function TCatalogItem.GetContentStream: TMemoryStream;
+var
+  ResStream: TResourceStream;
+begin
+  ResStream := autofree TResourceStream.Create(HINSTANCE, 'GAME_' + Filename, RT_RCDATA);
+  Result := TMemoryStream.Create;
+  Result.CopyFrom(ResStream, ResStream.Size);
+end;
+{$else}
+function TCatalogItem.GetContentStream: TMemoryStream;
+begin
+  Result := TMemoryStream.Create;
+  Result.LoadFromFile(Path);
+end;
+{$endif}
 
 function TCatalog.GetCount: Integer;
 begin
@@ -168,8 +222,11 @@ begin
     begin
       Name := FoldPunctuation(Doc.Cells[0, Row].Trim);
       Filename := Doc.Cells[1, Row].Trim;
-      if not Name.IsEmpty and not Filename.IsEmpty and TFile.Exists(Path) then
-        Inc(Count);
+      if not Name.IsEmpty and not Filename.IsEmpty
+        {$ifndef EMBED_CATALOG}
+          and TFile.Exists(Path)
+        {$endif}
+        then Inc(Count);
     end;
 
   SetLength(Items, Count);
@@ -191,6 +248,16 @@ begin
   Stream := autofree TFile.OpenRead(AFilename);
   LoadFromStream(Stream);
 end;
+
+{$ifdef EMBED_CATALOG}
+procedure TCatalog.LoadEmbedded;
+var
+  Stream: TResourceStream;
+begin
+  Stream := autofree TResourceStream.Create(HINSTANCE, 'CATALOG', RT_RCDATA);
+  LoadFromStream(Stream);
+end;
+{$endif}
 
 function AddCatalogPage(AParent: TMenuItem; AOnOpen: TMenuItemNotify): TCatalogMenuItem;
 var
@@ -221,6 +288,9 @@ begin
 end;
 
 procedure TCatalogMenuItem.ShowPicture(AIndex: Integer);
+var
+  Stream: TMemoryStream;
+  Buffer: TImage;
 begin
   if FPicture.id > 0 then UnloadTexture(FPicture);
   FPicture := Default(TTexture2D);
@@ -231,8 +301,15 @@ begin
   if (AIndex < 0) or (AIndex > High(Catalog.Items)) then Exit;
   if not Catalog.Items[AIndex].HasPicture then Exit;
 
-  FPicture := LoadTexture(PChar(Catalog.Items[AIndex].PicturePath));
-  SetTextureFilter(FPicture, TEXTURE_FILTER_BILINEAR);
+  {FPicture := LoadTexture(PChar(Catalog.Items[AIndex].PicturePath));}
+
+  Stream := autofree Catalog.Items[AIndex].GetPictureStream;
+  Buffer := LoadImageFromMemory('.png', Stream.Memory, Stream.Size);
+  FPicture := LoadTextureFromImage(Buffer);
+  UnloadImage(Buffer);
+
+  GenTextureMipmaps(@FPicture);
+  SetTextureFilter(FPicture, TEXTURE_FILTER_TRILINEAR);
 end;
 
 procedure TCatalogMenuItem.Render(ATop: Integer);
@@ -240,6 +317,8 @@ var
   Frame: TRectangle;
   Line: String;
   Y: Single;
+const
+  Crop = 16;
 begin
   if SelectedIndex <> FPictureIndex then ShowPicture(SelectedIndex);
   Catalog.CurrentItemIndex := SelectedIndex;
@@ -251,7 +330,7 @@ begin
 
   if FPicture.id > 0 then
     DrawTexturePro(FPicture,
-      RectangleCreate(Crop, Crop, FPicture.width - (2 * Crop), FPicture.height - (2 * Crop)),
+      RectangleCreate(Crop * 1.33, Crop, FPicture.width - (2.66 * Crop), FPicture.height - (2 * Crop)),
       Frame, [0, 0], 0, WHITE)
   else
     DrawTextEx(Font, '(no picture)',
@@ -281,17 +360,19 @@ begin
 end;
 
 initialization
-  { Run from the project folder the catalog is simply there; run from anywhere
-    else - a launcher, a shortcut - it sits next to the binary instead. }
-  CatalogDir := CatalogFolder;
-  if not TFile.Exists(TPath.Combine(CatalogDir, CatalogFile)) then
-    CatalogDir := TPath.Combine(GetApplicationDirectory, CatalogFolder);
-
   Catalog := TCatalog.Create;
-  Catalog.LoadFromFile(TPath.Combine(CatalogDir, CatalogFile));
-  { No list on disk: fall back to the one built into the binary, which still
-    only lists the titles whose files are actually there. }
-  if Catalog.IsEmpty then Catalog.LoadFromText(CatalogData);
+
+  {$ifdef EMBED_CATALOG}
+    Catalog.LoadEmbedded;
+  {$else}
+    { Run from the project folder the catalog is simply there; run from anywhere
+      else - a launcher, a shortcut - it sits next to the binary instead. }
+    CatalogDir := CatalogFolder;
+    if not TFile.Exists(TPath.Combine(CatalogDir, CatalogFile)) then
+      CatalogDir := TPath.Combine(GetApplicationDirectory, CatalogFolder);
+
+    Catalog.LoadFromFile(TPath.Combine(CatalogDir, CatalogFile));
+  {$endif}
 
 finalization
   FreeAndNil(Catalog);

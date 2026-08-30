@@ -7,7 +7,7 @@ program Spec;
   {$linkframework IOKit}
 {$endif}
 
-{$if defined(mswindows) and not defined(AUDIO_DEBUG)}
+{$ifdef mswindows}
   {$apptype gui}
 {$endif}
 
