@@ -1461,9 +1461,10 @@ end;
 
 procedure TApplication.HandleInput;
 var
-  Buffer: TImage;
   Filename: String;
 begin
+  if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
+
   if Assigned(Menu) then
   begin
     Menu.HandleInput;
@@ -1488,7 +1489,7 @@ begin
 
   Turbo := IsKeyDown(KEY_GRAVE);
 
-  if IsKeyPressed(KEY_F11) then ShowKeyboard := not ShowKeyboard;
+  if IsKeyPressed(KEY_F9) then ShowKeyboard := not ShowKeyboard;
 
   if IsKeyPressed(KEY_F2) then
   begin
@@ -1512,7 +1513,7 @@ begin
     end;
   end;
 
-  if IsKeyPressed(KEY_F9) then
+  if IsKeyPressed(KEY_F11) then
   begin
     TVType := (TVType + 1) mod Length(Shaders);
     SetOSD($'TV-set: {TVTypeNames[TVType]}');
@@ -1523,8 +1524,6 @@ begin
     Machine.SwitchJoystick;
     SetOSD($'Joystick: {Machine.JoystickName}');
   end;
-
-  if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
 
   if IsKeyPressed(KEY_F5) and Machine.WavLoaded then
   begin
