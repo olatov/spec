@@ -53,7 +53,7 @@ type
     function LoadFont: TFont;
     function LoadKeyboardTexture: TTexture2D;
     function LoadStream(const AFilename: String; AStream: TStream; out
-      AError: String): Boolean;
+      AError: String; AForceAutoLoad: Boolean = False): Boolean;
     procedure OpenMenu(ACatalog: Boolean = False);
     function GetPaused: Boolean;
     procedure SetMuted(AValue: Boolean);
@@ -711,7 +711,8 @@ begin
   Result := LoadStream(AFilename, Stream, AError);
 end;
 
-function TApplication.LoadStream(const AFilename: String; AStream: TStream; out AError: String): Boolean;
+function TApplication.LoadStream(const AFilename: String; AStream: TStream; out AError: String;
+  AForceAutoLoad: Boolean): Boolean;
 var
   Extension: String;
   Tape: Boolean;
@@ -753,7 +754,7 @@ begin
   TapeFile := AFilename;   { the Save field takes its default name from here }
   CurrentFile := AFilename;
 
-  if Tape and TapeAutoLoad then
+  if Tape and (TapeAutoLoad or AForceAutoLoad) then
   begin
     Machine.Reset;
     FAutoLoad.Active := True;
@@ -1257,7 +1258,9 @@ begin
           {$else}
             Stream := TFile.OpenRead(Sender.Data);
           {$endif}
-          if LoadStream(Sender.Data, Stream, Error) then
+          { Picking a game from the catalog means "play this", so its tape is
+            auto-loaded whether or not the setting is on. }
+          if LoadStream(Sender.Data, Stream, Error, True) then
           begin
             SetOSD($'Loaded {Sender.Text}');
             Sender.Menu.Close;   { frees Sender - nothing may follow }
