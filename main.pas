@@ -1334,7 +1334,7 @@ begin
       Sender.Value := BoolToStr(Fullscreen, 'yes', 'no');
     end);
 
-  Result.Root.AddItem('Aspect', BoolToStr(Fullscreen, '4:3', 'no'),
+  Result.Root.AddItem('Aspect', BoolToStr(Aspect, '4:3', 'no'),
   procedure(Sender: TMenuItem)
   begin
     Aspect := not Aspect;
