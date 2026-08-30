@@ -50,10 +50,9 @@
             </Debugging>
           </Linking>
           <Other>
-            <CustomOptions Value="-dUSE_DELAY
--dINCLUDE_CATALOG
--dDEBUG_AUDIO
--FF"/>
+            <CustomOptions Value="-FF
+-dUSE_DELAY
+-dDEBUG_AUDIO"/>
             <OtherDefines Count="3">
               <Define0 Value="USE_DELAY"/>
               <Define1 Value="INCLUDE_CATALOG"/>
@@ -94,8 +93,7 @@
           </Linking>
           <Other>
             <CustomOptions Value="-FF
--dUSE_DELAY
--dINCLUDE_CATALOG"/>
+-dUSE_DELAY"/>
             <OtherDefines Count="3">
               <Define0 Value="USE_DELAY"/>
               <Define1 Value="INCLUDE_CATALOG"/>
@@ -172,7 +170,8 @@
       </Debugging>
     </Linking>
     <Other>
-      <CustomOptions Value="-dUSE_DELAY
+      <CustomOptions Value="-FF
+-dUSE_DELAY
 -dDEBUG_AUDIO"/>
       <OtherDefines Count="4">
         <Define0 Value="DEBUG_AUDIO"/>

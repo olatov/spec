@@ -7,8 +7,11 @@ interface
 
 uses
   {$ifdef mswindows} Windows, {$endif}
-  Classes, SysUtils, System.IOUtils, CsvDocument,
+  Classes, SysUtils, System.IOUtils, CsvDocument, Math,
   Raylib, OSDMenu;
+
+const
+  DefaultItemIndex = 3;
 
 type
   TCatalogItem = record
@@ -208,7 +211,6 @@ var
   Row, Count: Integer;
 begin
   Items := Nil;
-  CurrentItemIndex := 0;
 
   Doc := autofree TCSVDocument.Create;
   Doc.LoadFromStream(AStream);
@@ -230,6 +232,7 @@ begin
     end;
 
   SetLength(Items, Count);
+  CurrentItemIndex := Min(DefaultItemIndex, High(Items));
 end;
 
 procedure TCatalog.LoadFromText(const AText: String);

@@ -50,6 +50,8 @@ type
     end;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
+    function LoadFont: TFont;
+    function LoadKeyboardTexture: TTexture2D;
     function LoadStream(const AFilename: String; AStream: TStream; out
       AError: String): Boolean;
     procedure OpenMenu(ACatalog: Boolean = False);
@@ -195,10 +197,10 @@ var
   {$embedstr ShaderTextColor 'shaders/shader_color.fs'}
   {$embedstr ShaderTextBW 'shaders/shader_bw.fs'}
   {$embedstr ShaderTextModern 'shaders/shader_modern.fs'}
-  {$embedbytes FontData 'fonts/Fake Receipt.otf'}
-  {$embedbytes KBLayout 'images/keyboard.png'}
 
 implementation
+
+{$R main.rc}
 
 procedure SetOSD(AText: String; ADuration: Double = 2); forward;
 
@@ -1006,7 +1008,7 @@ begin
 
   Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
 
-  Font := LoadFontFromMemory('.otf', FontData, SizeOf(FontData), 24, Nil, 0);
+  Font := Self.LoadFont;
 
   TVType := Config.ReadInteger('Display', 'TVType', TVTypeColor) mod Length(Shaders);
   Overscan := Config.ReadInteger('Display', 'Overscan', 16);
@@ -1039,6 +1041,8 @@ begin
       GetShaderLocation(Shaders[I], 'curvature'), @Curvature, SHADER_UNIFORM_FLOAT);
   end;
 
+  KBTexture := LoadKeyboardTexture;
+
   Image := GenImageColor(ImageWidth, ImageHeight, BLACK);
   Pixels := Image.data;
   Video := LoadTextureFromImage(Image);
@@ -1053,6 +1057,26 @@ begin
   {$ifdef DEBUG_AUDIO}
     StatsInit;
   {$endif}
+end;
+
+function TApplication.LoadFont: TFont;
+var
+  Stream: TResourceStream;
+begin
+  Stream := autofree TResourceStream.Create(HINSTANCE, 'MAIN_FONT', RT_RCDATA);
+  Result := LoadFontFromMemory('.otf', Stream.Memory, Stream.Size, 24, Nil, 0);
+end;
+
+function TApplication.LoadKeyboardTexture: TTexture2D;
+var
+  Buffer: TImage;
+  Stream: TResourceStream;
+begin
+  Stream := autofree TResourceStream.Create(HINSTANCE, 'IMAGE_KEYBOARD', RT_RCDATA);
+  Buffer := LoadImageFromMemory('.png', Stream.Memory, Stream.Size);
+  Result := LoadTextureFromImage(Buffer);
+  SetTextureFilter(Result, TEXTURE_FILTER_BILINEAR);
+  UnloadImage(Buffer);
 end;
 
 procedure TApplication.SetVolume(AVolume: Single; K: Single = 4);
@@ -1142,14 +1166,15 @@ begin
         RectangleCreate(0, 0, Menu.Texture.width, -Menu.Texture.height),
         Dest,
         Vector2Zero, 0, WHITE);
-    end else
-    if ShowKeyboard then
+    end
+    else if ShowKeyboard then
     begin
       Dest.height := KBTexture.height * Dest.width / KBTexture.width;
       DrawTexturePro(KBTexture,
         RectangleCreate(0, 0, KBTexture.width, KBTexture.height), Dest,
           Vector2Zero, 0, WHITE);
       DrawRectangleLinesEx(Dest, 1, RAYWHITE);
+      {
       Dest.y := Dest.height;
       DrawRectangleLinesEx(Dest, 1, RAYWHITE);
       Dest.height := Dest.height * 0.1;
@@ -1180,6 +1205,7 @@ begin
         PChar('Joystick: ' + Machine.JoystickName + S),
         [Dest.x + (Dest.width * 0.012), Dest.y + (Dest.height * 0.25)],
         Trunc(Dest.height * 0.5), 0, YELLOW);
+      }
     end;
 
     if not OSD.Text.IsEmpty then
@@ -1459,19 +1485,7 @@ begin
 
   Turbo := IsKeyDown(KEY_GRAVE);
 
-  if IsKeyPressed(KEY_F11) then
-  begin
-    ShowKeyboard := not ShowKeyboard;
-    if ShowKeyboard then
-    begin
-      Buffer := LoadImageFromMemory('.png', KBLayout, SizeOf(KBLayout));
-      KBTexture := LoadTextureFromImage(Buffer);
-      SetTextureFilter(KBTexture, TEXTURE_FILTER_BILINEAR);
-      UnloadImage(Buffer);
-    end
-    else
-      UnloadTexture(KBTexture);
-  end;
+  if IsKeyPressed(KEY_F11) then ShowKeyboard := not ShowKeyboard;
 
   if IsKeyPressed(KEY_F2) then
   begin
