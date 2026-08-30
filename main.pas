@@ -37,6 +37,11 @@ uses
   Z80, Spectrum, OSDMenu, Keyboards, Catalogs;
 
 type
+  TSimpleTimer = record
+    Enabled: Boolean;
+    Countdown: Double;
+  end;
+
   TApplication = class(TComponent)
   private
     FFullscreen: Boolean;
@@ -44,6 +49,7 @@ type
     FMuted: Boolean;
     FTapeAutoLoad: Boolean;
     FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
+    FQuitTimer: TSimpleTimer;
     FAutoLoad: record
       Active: Boolean;
       Frame: Integer;
@@ -105,6 +111,7 @@ type
     QuitRequested: Boolean;
     BorderT: Integer;
     CurrentFile: String;
+    Aspect: Boolean;
     Turbo: Boolean;
     property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
@@ -1013,6 +1020,7 @@ begin
 
   TVType := Config.ReadInteger('Display', 'TVType', TVTypeColor) mod Length(Shaders);
   Overscan := Config.ReadInteger('Display', 'Overscan', 16);
+  Aspect := Config.ReadBool('Display', 'Aspect', True);
   TapeSound := Config.ReadBool('Tape', 'Sound', True);
   Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
   Machine.OnTapeSaved := @TapeSaved;
@@ -1091,12 +1099,9 @@ var
   Dest, Highlight: TRectangle;
   Started, EmuDone, BlitDone: Double;
   Idle: Boolean;
-  Event: TAutomationEvent;
   Files: TFilePathList;
   Filename, ErrorMessage: String;
   Scale: Single;
-  MousePos: TVector2;
-  I: Integer;
 begin
   if IsFileDropped then
   begin
@@ -1111,6 +1116,12 @@ begin
     finally
       UnloadDroppedFiles(Files);
     end;
+  end;
+
+  if FQuitTimer.Enabled then
+  begin
+    FQuitTimer.Countdown := FQuitTimer.Countdown - GetFrameTime;
+    FQuitTimer.Enabled := FQuitTimer.Countdown > 0;
   end;
 
   Started := GetTime;
@@ -1147,11 +1158,14 @@ begin
     ClearBackground(BLACK);
     BeginShaderMode(Shaders[TVType]);
 
-    Dest := if (GetScreenWidth / GetScreenHeight) >= 1.333
-      then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0,
-        GetScreenHeight * 1.333, GetScreenHeight)
-      else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375
-        ), GetScreenWidth, GetScreenWidth * 0.75);
+    if Aspect then
+      Dest := if (GetScreenWidth / GetScreenHeight) >= 1.333
+        then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0,
+          GetScreenHeight * 1.333, GetScreenHeight)
+        else RectangleCreate(0, (0.5 * GetScreenHeight) - (GetScreenWidth * 0.375
+          ), GetScreenWidth, GetScreenWidth * 0.75)
+    else
+      RectangleSet(@Dest, 0, 0, GetScreenWidth, GetScreenHeight);
 
     DrawTexturePro(
       Target.Texture,
@@ -1278,18 +1292,18 @@ begin
       DescribeSaveName(Sender);
     end;
 
-  Result.Root.AddItem('TV-set', TVTypeNames[TVType],
-    procedure(Sender: TMenuItem)
-    begin
-      TVType := (TVType + 1) mod 3;
-      Sender.Value := TVTypeNames[TVType];
-    end);
-
   Result.Root.AddItem('Joystick', Machine.JoystickName,
     procedure(Sender: TMenuItem)
     begin
       Machine.SwitchJoystick;
       Sender.Value := Machine.JoystickName;
+    end);
+
+  Result.Root.AddItem('TV-set', TVTypeNames[TVType],
+    procedure(Sender: TMenuItem)
+    begin
+      TVType := (TVType + 1) mod 3;
+      Sender.Value := TVTypeNames[TVType];
     end);
 
   Result.Root.AddItem('Fullscreen', BoolToStr(Fullscreen, 'yes', 'no'),
@@ -1299,7 +1313,14 @@ begin
       Sender.Value := BoolToStr(Fullscreen, 'yes', 'no');
     end);
 
-  Result.Root.AddItem('Sound', BoolToStr(not Muted, 'yes', 'no'),
+  Result.Root.AddItem('Aspect', BoolToStr(Fullscreen, '4:3', 'no'),
+  procedure(Sender: TMenuItem)
+  begin
+    Aspect := not Aspect;
+    Sender.Value := BoolToStr(Aspect, '4:3', 'no');
+  end);
+
+  Result.Root.AddItem('Sound', BoolToStr(not Muted, 'yes', '-'),
     procedure(Sender: TMenuItem)
     begin
       Muted := not Muted;
@@ -1442,8 +1463,6 @@ begin
 end;
 
 procedure TApplication.HandleInput;
-var
-  Filename: String;
 begin
   if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
 
@@ -1452,22 +1471,21 @@ begin
     Menu.HandleInput;
     Exit;
   end
-  else if IsKeyPressed(KEY_ESCAPE) then QuitRequested := True;
+  else if IsKeyPressed(KEY_ESCAPE) then
+    if FQuitTimer.Enabled then
+      QuitRequested := True
+    else
+    begin
+      FQuitTimer.Enabled := True;
+      FQuitTimer.Countdown := 2;
+      SetOSD('ESC to quit');
+    end;
 
   if IsKeyPressed(KEY_F1) then OpenMenu;
 
   { Straight to the catalog, skipping the top page. Nothing to show means
     nothing happens, rather than the menu opening on something else. }
   if IsKeyPressed(KEY_TAB) and not Catalog.IsEmpty then OpenMenu(True);
-
-  if IsKeyPressed(KEY_SCROLL_LOCK) then
-  begin
-    Filename := TPath.GetFileNameWithoutExtension(CurrentFile);
-    if Filename.IsEmpty then Filename := 'screen';
-    Filename := TPath.Combine('catalog/', Filename + '.png');
-    ExportImage(Image, PChar(Filename));
-    SetOSD('Saved ' + Filename);
-  end;
 
   Turbo := IsKeyDown(KEY_GRAVE);
 
@@ -1677,6 +1695,7 @@ begin
 
   Config.WriteInteger('Display', 'TVType', TVType);
   Config.WriteInteger('Display', 'Overscan', Overscan);
+  Config.WriteBool('Display', 'Aspect', Aspect);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
   Config.WriteBool('Audio', 'Muted', Muted);
