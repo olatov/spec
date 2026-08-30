@@ -1376,7 +1376,7 @@ var
   Page, Item: TMenuItem;
   Control: TJoystickControl;
 begin
-  Page := AParent.AddItem('Controls');
+  Page := AParent.AddItem('Joystick Controls');
 
   for Control := Low(TJoystickControl) to High(TJoystickControl) do
   begin
