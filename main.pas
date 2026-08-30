@@ -1548,7 +1548,7 @@ begin
     begin
       FQuitTimer.Enabled := True;
       FQuitTimer.Countdown := 2;
-      SetOSD('ESC to quit');
+      SetOSD('ESC again to quit');
     end;
 
   if IsKeyPressed(KEY_F1) then OpenMenu;
