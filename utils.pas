@@ -99,9 +99,16 @@ type
     StateMask: ULONG;
   end;
 
-function SetProcessInformation(hProcess: THandle; ProcessInformationClass: DWORD;
-  ProcessInformation: Pointer; ProcessInformationSize: DWORD): BOOL; stdcall;
-  external 'kernel32' name 'SetProcessInformation';
+type
+  TSetProcessInformation = function(hProcess: THandle;
+    ProcessInformationClass: DWORD; ProcessInformation: Pointer;
+    ProcessInformationSize: DWORD): BOOL; stdcall;
+
+var
+  { SetProcessInformation only exists in kernel32 from Windows 8 on. A
+    load-time import would stop the process starting at all on Windows 7 and
+    earlier, so it is resolved by hand and left nil where absent. }
+  SetProcessInformation: TSetProcessInformation;
 
 procedure Delay(ASecs: Double); inline;
 begin
@@ -127,14 +134,18 @@ begin
   State.ControlMask := PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
   State.StateMask := 0;
 
-  { Fails on Windows 10 and earlier, where the flag does not exist - leaving
-    the behaviour those versions have anyway, so the result is not worth
-    acting on. }
-  SetProcessInformation(GetCurrentProcess, ProcessPowerThrottling,
-    @State, SizeOf(State));
+  { The flag itself only lands on Windows 11; on Windows 8..10 the call just
+    returns an error, and on Windows 7 SetProcessInformation is nil. Either
+    way the older behaviour is what those versions have anyway, so the result
+    is not worth acting on. }
+  if Assigned(SetProcessInformation) then
+    SetProcessInformation(GetCurrentProcess, ProcessPowerThrottling,
+      @State, SizeOf(State));
 end;
 
 initialization
+  Pointer(SetProcessInformation) :=
+    GetProcAddress(GetModuleHandle('kernel32'), 'SetProcessInformation');
   KeepTimerResolution;
   timeBeginPeriod(TimerPeriod);
 

@@ -36,7 +36,7 @@ type
     Data: String;          { the owner's payload - never drawn }
     Warning: String;       { drawn by the pages that have somewhere to put it }
     SelectedIndex: Integer;
-    Items: TFPGObjectList<TMenuItem>;
+    Items: TStringList;
     OnApply: TMenuItemNotify;
     property Parent: TMenuItem read FParent;
     property Menu: TMenu read GetMenu;
@@ -232,7 +232,7 @@ end;
 function TMenuItem.GetSelectedItem: TMenuItem;
 begin
   Result := if SelectedIndex < Items.Count
-    then Items[SelectedIndex]
+    then TMenuItem(Items.Objects[SelectedIndex])
     else Nil;
 end;
 
@@ -248,7 +248,7 @@ begin
   Result.Text := AText;
   Result.Value := AValue;
   Result.OnApply := AOnApply;
-  Items.Add(Result);
+  Items.AddObject(Result.Text, Result);
 end;
 
 function TMenuItem.AddEdit(AText: String; APrompt: String; AOnAccept: TMenuEditNotify): TEditMenuItem;
@@ -258,7 +258,7 @@ begin
   Result.Text := AText;
   Result.Prompt := APrompt;
   Result.OnAccept := AOnAccept;
-  Items.Add(Result);
+  Items.AddObject(Result.Text, Result);
 end;
 
 function TMenuItem.AddBrowser(AText: String; APath: String; AOnBrowse: TMenuBrowseNotify): TFileMenuItem;
@@ -268,7 +268,7 @@ begin
   Result.Text := AText;
   Result.Path := APath;
   Result.OnBrowse := AOnBrowse;
-  Items.Add(Result);
+  Items.AddObject(Result.Text, Result);
 end;
 
 function TMenuItem.AddKey(AText: String; APrompt: String; AOnCapture: TMenuKeyNotify): TKeyMenuItem;
@@ -278,7 +278,7 @@ begin
   Result.Text := AText;
   Result.Prompt := APrompt;
   Result.OnCapture := AOnCapture;
-  Items.Add(Result);
+  Items.AddObject(Result.Text, Result);
 end;
 
 procedure TMenuItem.Apply;
@@ -356,7 +356,7 @@ begin
 
   for I := First to Min(First + MenuVisibleItems, Items.Count) - 1 do
   begin
-    Item := Items[I];
+    Item := TMenuItem(Items.Objects[I]);
 
     Line := Item.Text;
     if not Item.Value.IsEmpty then
@@ -414,12 +414,12 @@ var
 begin
   Result := -1;
   for I := AFrom to Items.Count - 1 do
-    if Items[I].Text.StartsWith(APrefix, True) then Exit(I);
+    if TMenuItem(Items.Objects[I]).Text.StartsWith(APrefix, True) then Exit(I);
 end;
 
 constructor TMenuItem.Create(AParent: TMenuItem);
 begin
-  Items := TFPGObjectList<TMenuItem>.Create;
+  Items := TStringList.Create(True);
   FParent := AParent;
 end;
 
@@ -611,7 +611,7 @@ end;
 
 constructor TRootMenuItem.Create(AParent: TMenu);
 begin
-  Items := TFPGObjectList<TMenuItem>.Create;
+  Items := TStringList.Create(True);
   FMenu := AParent;
 end;
 

@@ -1440,7 +1440,7 @@ var
 begin
   for I := 0 to APage.Items.Count - 1 do
   begin
-    Item := APage.Items[I];
+    Item := TMenuItem(APage.Items.Objects[I]);
     if Item is TKeyMenuItem then
       Item.Value := TKeyboard.KeyName[
         TJoystick.Bindings[TJoystickControl(StrToInt(Item.Data))]];

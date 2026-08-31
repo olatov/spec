@@ -275,7 +275,7 @@ begin
   Result := TCatalogMenuItem.Create(AParent);
   Result.Font := AParent.Font;
   Result.Text := 'Catalog';
-  AParent.Items.Add(Result);
+  AParent.Items.AddObject(Result.Text, Result);
 
   for Item in Catalog.Items do
     Result.AddItem(Item.Name, '', AOnOpen).Data := Item.Path;
