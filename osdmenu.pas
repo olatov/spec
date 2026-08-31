@@ -181,6 +181,7 @@ const
   MenuLineHeight = 30;
   MenuVisibleItems = 12;
   MenuTextSize = 24;
+  Copyright = '(c)2026 @olatov';
 
 implementation
 
@@ -758,6 +759,8 @@ begin
 
   DrawRectangle(0, 480 - 48, 640, 36, DARKBLUE);
   DrawTextEx(Font, PChar(FCurrent.Footer), [MenuLeft, 440], 20, 0, YELLOW);
+
+  DrawTextEx(Font, PChar(Copyright), [436, 438], 24, 0, YELLOW);
 
   EndTextureMode;
 end;
