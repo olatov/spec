@@ -1587,7 +1587,8 @@ end;
 
 procedure TApplication.HandleInput;
 var
-  Filename: String;
+  Filename, FullFilename: String;
+  I: Integer;
 begin
   if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
 
@@ -1595,9 +1596,15 @@ begin
   begin
     Filename := TPath.GetFileNameWithoutExtension(CurrentFile);
     if Filename.IsEmpty then Filename := 'screen';
-    Filename := Filename + '.png';
-    ExportImage(Image, PChar(Filename));
-    SetOSD(PChar('Saved ' + Filename));
+    FullFilename := Filename + '.png';
+    I := 0;
+    while TFile.Exists(FullFilename) and (I < 100) do
+    begin
+      Inc(I);
+      FullFilename := $'{Filename}_{I}.png';
+    end;
+    ExportImage(Image, PChar(FullFilename));
+    SetOSD(PChar('Saved ' + FullFilename));
   end;
 
   if Assigned(Menu) then
