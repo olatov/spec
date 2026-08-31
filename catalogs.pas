@@ -328,7 +328,7 @@ var
   Y: Single;
   Index: Integer;
 const
-  Crop = 16;
+  Crop = 24;
 begin
   { The entries were built one per catalog title, in order, so an entry's place
     in the page's own list is its place in the catalog. Its place in the shown
