@@ -72,6 +72,7 @@ type
     procedure ArmSave;
     function GetJoystick: TJoystick;
     function GetJoystickName: String;
+    function LoadFromWave(const Wave: TWave): Boolean;
     procedure RecordMicEdge;
     procedure FinishSave;
     function WriteSaveWAV(const AFilename: String): Boolean;
@@ -151,11 +152,11 @@ type
       fast-load trap fires. Returns False (leaving the tape empty and the ROM
       unpatched) if the file can't be read or contains no blocks. }
     function LoadTAP(const AFilename: String): Boolean;
-    { Decodes a PCM .WAV file (8/16-bit, mono or stereo) into a transition
-      list for real-time playback on the EAR line, and patches LD-BYTES so
-      playback auto-starts when a load begins. The ROM (or a turbo loader)
-      times the edges itself. Returns False if the file isn't a usable PCM
-      WAV or decodes to no signal. }
+    { Decodes a .WAV file (any format/rate/channel count raylib's LoadWave
+      accepts) into a transition list for real-time playback on the EAR line,
+      and patches LD-BYTES so playback auto-starts when a load begins. The ROM
+      (or a turbo loader) times the edges itself. Returns False if the file
+      isn't a usable WAV or decodes to no signal. }
     function LoadTAP(const AStream: TStream): Boolean;
     function LoadWAV(const AFilename: String): Boolean;
     function LoadWAV(const AStream: TStream): Boolean;
@@ -1211,54 +1212,30 @@ begin
   Result := True;
 end;
 
-function TZXSpectrum48.LoadWAV(const AFilename: String): Boolean;
+function TZXSpectrum48.LoadFromWave(const Wave: TWave): Boolean;
+{$PUSH}{$POINTERMATH ON}
 var
-  Stream: TFileStream;
-begin
-  Result := False;
-  if not TFile.Exists(AFilename) then Exit;
-  Stream := autofree TFile.OpenRead(AFilename);
-  Result := LoadWAV(Stream);
-end;
-
-function TZXSpectrum48.LoadWAV(const AStream: TStream): Boolean;
-var
-  ChunkID: array[0..3] of AnsiChar;
-  ChunkSize: LongWord;
-  AudioFormat, NumChannels, BitsPerSample, BlockAlign: Word;
-  SampleRate: LongWord;
-  DataStart, DataSize: Int64;
-  HaveFmt: Boolean;
-  Tag: String;
-
-  function ReadTag: String;
-  begin
-    if AStream.Read(ChunkID[0], 4) <> 4 then Exit('');
-    SetString(Result, PAnsiChar(@ChunkID[0]), 4);
-  end;
+  Raw: TBytes;
 
   { Run-length-encodes the thresholded mono signal into FWavEdges. A slow
     EMA tracks the DC bias so off-centre cassette rips still resolve; a
-    hysteresis band rejects noise near the crossing. }
+    hysteresis band rejects noise near the crossing. raylib has already
+    decoded/downmixed the file to centred 16-bit mono at its native rate. }
   procedure BuildEdges;
   const
     FullScale = 32768;
     Hysteresis = FullScale div 12;
   var
-    Raw: TBytes;
-    FrameCount, Frame, Ch, Offset, BytesPerSample: Integer;
-    Acc, Sample: Integer;
+    Samples: PSmallInt;
+    FrameCount, Frame: Integer;
+    Sample: Integer;
     BiasAcc: Int64;
     Bias, Delta: Integer;
     Level, Prev: Boolean;
     Count: Integer;
   begin
-    SetLength(Raw, DataSize);
-    AStream.Position := DataStart;
-    if DataSize > 0 then AStream.ReadBuffer(Raw[0], DataSize);
-
-    BytesPerSample := BitsPerSample div 8;
-    FrameCount := DataSize div BlockAlign;
+    Samples := PSmallInt(Wave.data);
+    FrameCount := Wave.frameCount;
 
     BiasAcc := 0;
     Level := False;
@@ -1269,16 +1246,7 @@ var
 
     for Frame := 0 to FrameCount - 1 do
     begin
-      Acc := 0;
-      for Ch := 0 to NumChannels - 1 do
-      begin
-        Offset := Frame * BlockAlign + Ch * BytesPerSample;
-        if BitsPerSample = 16 then
-          Inc(Acc, SmallInt(Raw[Offset] or (Word(Raw[Offset + 1]) shl 8)))
-        else
-          Inc(Acc, (Integer(Raw[Offset]) - 128) * 256); { 8-bit unsigned -> centred 16-bit }
-      end;
-      Sample := Acc div NumChannels;
+      Sample := Samples[Frame];
 
       BiasAcc := BiasAcc + (Sample - (BiasAcc div 4096));
       Bias := BiasAcc div 4096;
@@ -1291,7 +1259,7 @@ var
       begin
         if Count >= Length(FWavEdges) then
           SetLength(FWavEdges, Max(1024, Length(FWavEdges) * 2));
-        FWavEdges[Count] := (Int64(Frame) * CPUClockHz) div SampleRate;
+        FWavEdges[Count] := (Int64(Frame) * CPUClockHz) div Wave.sampleRate;
         Inc(Count);
         Prev := Level;
       end;
@@ -1309,53 +1277,16 @@ begin
   FWavCursor := 0;
   SetLength(FWavEdges, 0);
 
-  if (ReadTag <> 'RIFF') then Exit;
-  AStream.ReadDWord; { RIFF chunk size - ignored }
-  if (ReadTag <> 'WAVE') then Exit;
-
-  HaveFmt := False;
-  DataStart := -1;
-  DataSize := 0;
-  NumChannels := 0;
-  BlockAlign := 0;
-
-  while AStream.Position + 8 <= AStream.Size do
-  begin
-    Tag := ReadTag;
-    if Length(Tag) < 4 then Break;
-    ChunkSize := AStream.ReadDWord;
-
-    if Tag = 'fmt ' then
-    begin
-      AudioFormat := AStream.ReadWord;
-      NumChannels := AStream.ReadWord;
-      SampleRate := AStream.ReadDWord;
-      AStream.ReadDWord;            { byte rate }
-      BlockAlign := AStream.ReadWord;
-      BitsPerSample := AStream.ReadWord;
-      HaveFmt := True;
-      if ChunkSize > 16 then AStream.Position := AStream.Position + (ChunkSize - 16);
-    end
-    else if Tag = 'data' then
-    begin
-      DataStart := AStream.Position;
-      DataSize := ChunkSize;
-      if DataStart + DataSize > AStream.Size then DataSize := AStream.Size - DataStart;
-      AStream.Position := AStream.Position + ChunkSize + (ChunkSize and 1);
-    end
-    else
-      AStream.Position := AStream.Position + ChunkSize + (ChunkSize and 1);
-
-    if HaveFmt and (DataStart >= 0) then Break;
+  try
+    if not IsWaveValid(Wave) then Exit;
+    { Collapse to centred 16-bit mono in the currency BuildEdges expects;
+      the native sample rate is kept so the edge timing is unchanged. }
+    WaveFormat(@Wave, Wave.sampleRate, 16, 1);
+    if (Wave.data = nil) or (Wave.frameCount = 0) then Exit;
+    BuildEdges;
+  finally
+    UnloadWave(Wave);
   end;
-
-  if not HaveFmt or (DataStart < 0) then Exit;
-  if AudioFormat <> 1 then Exit;                     { PCM only }
-  if (BitsPerSample <> 8) and (BitsPerSample <> 16) then Exit;
-  if NumChannels < 1 then Exit;
-  if BlockAlign = 0 then BlockAlign := NumChannels * (BitsPerSample div 8);
-
-  BuildEdges;
 
   Result := Length(FWavEdges) > 0;
   if Result then
@@ -1369,6 +1300,34 @@ begin
     FTapeCursor := 0;
     SetLength(FTapeBlocks, 0);
   end;
+
+{$POP}
+end;
+
+function TZXSpectrum48.LoadWAV(const AFilename: String): Boolean;
+var
+  Wave: TWave;
+begin
+  Result := False;
+  if not TFile.Exists(AFilename) then Exit;
+  Wave := LoadWave(PChar(AFilename));
+  Result := LoadFromWave(Wave);
+end;
+
+function TZXSpectrum48.LoadWAV(const AStream: TStream): Boolean;
+var
+  Buffer: TMemoryStream;
+  Size: Int64;
+  Wave: TWave;
+begin
+  Result := False;
+  Size := AStream.Size - AStream.Position;
+  if Size <= 0 then Exit;
+
+  Buffer := autofree TMemoryStream.Create;
+  Buffer.CopyFrom(AStream, Size);
+  Wave := LoadWaveFromMemory('.wav', Buffer.Memory, Buffer.Size);
+  Result := LoadFromWave(Wave);
 end;
 
 end.
