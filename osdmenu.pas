@@ -65,6 +65,11 @@ type
     function Footer: String; virtual;
     procedure Next;
     procedure Previous;
+    procedure PageUp;
+    procedure PageDown;
+    procedure Home;
+    procedure End_;
+    function Find(APrefix: String): Integer;
     constructor Create(AParent: TMenuItem = Nil); virtual;
     destructor Destroy; override;
   end;
@@ -285,9 +290,24 @@ begin
 end;
 
 procedure TMenuItem.HandleInput;
+var
+  I: Integer;
+  Key: TKeyboardKey;
 begin
   if IsKeyPressed(KEY_UP) or IsKeyPressedRepeat(KEY_UP) then Previous;
   if IsKeyPressed(KEY_DOWN) or IsKeyPressedRepeat(KEY_DOWN) then Next;
+  if IsKeyPressed(KEY_PAGE_UP) or IsKeyPressedRepeat(KEY_PAGE_UP) then PageUp;
+  if IsKeyPressed(KEY_PAGE_DOWN) or IsKeyPressedRepeat(KEY_PAGE_DOWN) then PageDown;
+  if IsKeyPressed(KEY_HOME) then Home;
+  if IsKeyPressed(KEY_END) then End_;
+
+  Key := GetKeyPressed;
+  if Key in [KEY_A..KEY_Z] then
+  begin
+    I := Find(Char(Key - KEY_A + Ord('A')));
+    if I >= 0 then SelectedIndex := I;
+  end;
+
   if IsKeyPressed(KEY_ESCAPE) then
   begin
     Menu.Back;
@@ -363,6 +383,37 @@ begin
   if Items.Count = 0 then Exit;
   SelectedIndex := (SelectedIndex - 1) mod Items.Count;
   if SelectedIndex < 0 then SelectedIndex := Items.Count - 1;
+end;
+
+procedure TMenuItem.PageUp;
+begin
+  if Items.Count = 0 then Exit;
+  SelectedIndex := Max(SelectedIndex - 10, 0);
+end;
+
+procedure TMenuItem.PageDown;
+begin
+  if Items.Count = 0 then Exit;
+  SelectedIndex := Min(SelectedIndex + 10, Items.Count - 1);
+end;
+
+procedure TMenuItem.Home;
+begin
+  SelectedIndex := 0;
+end;
+
+procedure TMenuItem.End_;
+begin
+  SelectedIndex := Items.Count - 1;
+end;
+
+function TMenuItem.Find(APrefix: String): Integer;
+var
+  I: Integer;
+begin
+  Result := -1;
+  for I := 0 to Items.Count - 1 do
+    if Items[I].Text.StartsWith(APrefix, True) then Exit(I);
 end;
 
 constructor TMenuItem.Create(AParent: TMenuItem);
