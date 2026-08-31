@@ -1129,11 +1129,13 @@ end;
 procedure TApplication.RunFrame;
 var
   Dest, Highlight: TRectangle;
-  Started, EmuDone, BlitDone: Double;
-  Idle: Boolean;
   Files: TFilePathList;
   Filename, ErrorMessage: String;
   Scale, PixelAspect: Single;
+  {$ifdef DEBUG_AUDIO}
+    Started, EmuDone, BlitDone: Double;
+    Idle: Boolean;
+  {$endif}
 begin
   if IsFileDropped then
   begin
@@ -1156,8 +1158,10 @@ begin
     FQuitTimer.Enabled := FQuitTimer.Countdown > 0;
   end;
 
-  Started := GetTime;
-  Idle := Paused or Muted;
+  {$ifdef DEBUG_AUDIO}
+    Started := GetTime;
+    Idle := Paused or Muted;
+  {$endif}
 
   HandleInput;
 
@@ -1173,7 +1177,9 @@ begin
     end;
   end;
 
-  EmuDone := GetTime;
+  {$ifdef DEBUG_AUDIO}
+    EmuDone := GetTime;
+  {$endif}
 
   UpdateTexture(Video, Image.data);
 
@@ -1184,7 +1190,9 @@ begin
       Vector2Zero, 0, WHITE);
   EndTextureMode;
 
-  BlitDone := GetTime;
+  {$ifdef DEBUG_AUDIO}
+    BlitDone := GetTime;
+  {$endif}
 
   BeginDrawing;
     ClearBackground(BLACK);
