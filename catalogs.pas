@@ -305,8 +305,8 @@ begin
   FPicture := Default(TTexture2D);
   FPictureIndex := AIndex;
 
-  { The entries were built one per catalog title, in order, so the selection
-    indexes both lists. A title without a picture leaves the frame empty. }
+  { A title without a picture - and a page with nothing selected - leaves the
+    frame empty. }
   if (AIndex < 0) or (AIndex > High(Catalog.Items)) then Exit;
   if not Catalog.Items[AIndex].HasPicture then Exit;
 
@@ -326,11 +326,17 @@ var
   Frame: TRectangle;
   Line: String;
   Y: Single;
+  Index: Integer;
 const
   Crop = 16;
 begin
-  if SelectedIndex <> FPictureIndex then ShowPicture(SelectedIndex);
-  Catalog.CurrentItemIndex := SelectedIndex;
+  { The entries were built one per catalog title, in order, so an entry's place
+    in the page's own list is its place in the catalog. Its place in the shown
+    list is not, once a filter has taken titles out of the middle - so the
+    picture is looked up by the entry, never by the selection index. }
+  Index := Items.IndexOfObject(SelectedItem);
+  if Index <> FPictureIndex then ShowPicture(Index);
+  if Index >= 0 then Catalog.CurrentItemIndex := Index;
 
   RenderItems(ATop, CatalogListWidth);
 

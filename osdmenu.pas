@@ -237,29 +237,32 @@ end;
 
 function TMenuItem.GetSelectedItem: TMenuItem;
 begin
-  Result := if SelectedIndex < FilteredItems.Count
+  Result := if InRange(SelectedIndex, 0, FilteredItems.Count - 1)
     then TMenuItem(FilteredItems.Objects[SelectedIndex])
     else Nil;
 end;
 
+{ Rebuilds the shown list from the whole one. An empty filter matches
+  everything, so the two lists hold the same items in the same order and every
+  page that has no filter behaves as it did before there was one. }
 procedure TMenuItem.SetFilter(AValue: String);
 var
   I: Integer;
+  Selected: TMenuItem;
 begin
+  { The selection belongs to an item, not to a place in the list - typing a
+    filter must not slide it onto whichever title lands at that place. }
+  Selected := SelectedItem;
   FFilter := AValue.Trim;
 
-  if FFilter.IsEmpty then
-  begin
-    FFilteredItems.SetStrings(FItems);
-    Exit;
-  end;
-
   FFilteredItems.Clear;
-  SelectedIndex := 0;
 
   for I := 0 to Items.Count - 1 do
-    if Items[I].Contains(Filter, True) then
+    if FFilter.IsEmpty or Items[I].Contains(FFilter, True) then
       FilteredItems.AddObject(Items[I], Items.Objects[I]);
+
+  { A selection filtered away leaves the first match selected. }
+  SelectedIndex := Max(FilteredItems.IndexOfObject(Selected), 0);
 end;
 
 function TMenuItem.GetMenu: TMenu;
