@@ -1068,7 +1068,10 @@ begin
         TKeyboard.KeyId[TJoystick.Bindings[Control]]));
 
   Target := LoadRenderTexture(352, 288);
-  SetTextureFilter(Target.texture, TEXTURE_FILTER_BILINEAR);
+  SetTextureFilter(Target.texture,
+     if Config.ReadBool('Video', 'Filter', True)
+      then TEXTURE_FILTER_BILINEAR
+      else TEXTURE_FILTER_POINT);
 
   Shaders[TVTypeColor] := LoadShaderFromMemory(Nil, @ShaderTextColor[1]);
   Shaders[TVTypeBW] := LoadShaderFromMemory(Nil, @ShaderTextBW[1]);
