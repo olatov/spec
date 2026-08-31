@@ -54,6 +54,9 @@ type
       Active: Boolean;
       Frame: Integer;
     end;
+    { GetTime deadline for a one-shot re-prime of the audio stream after the
+      device has warmed up, or 0 when none is pending. See Run. }
+    FAudioWarmup: Double;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
     procedure AddControlsPage(AParent: TMenuItem);
@@ -1471,6 +1474,9 @@ begin
   begin
     PlayAudioStream(AudioStream);
     PrimeAudio;
+    { The device may have been idle long enough to have been torn down; give it
+      the same warm-up re-prime the initial start gets (see Run). }
+    FAudioWarmup := GetTime + 0.75;
   end;
 end;
 
@@ -1511,6 +1517,18 @@ begin
   begin
     PlayAudioStream(AudioStream);
     PrimeAudio;
+
+    { The fill above lands before the device has actually started pulling from
+      the stream - on Linux the backend takes a beat to come up, and on top of
+      that the first second carries the ROM's RAM test and one-off shader/font
+      setup, so several early frames overshoot. Between them the stream is left
+      running on a single sub-buffer at a phase where ordinary jitter clips a
+      chunk about once a second - a steady stutter until something re-primes it
+      (opening and closing the menu was the accidental cure). So schedule one
+      more prime once the device is up and the frame clock has settled, which
+      rebuilds the full two-sub-buffer cushion and holds. macOS and Windows do
+      not need it but are not harmed by it. }
+    FAudioWarmup := GetTime + 0.75;
   end;
 
   { Nothing asked for on the command line and something to offer: the session
@@ -1526,6 +1544,15 @@ begin
 
   while not (WindowShouldClose or QuitRequested) do
   begin
+    { The one-shot warm-up prime (see above). Skipped while the menu holds the
+      machine paused - the stream is draining then, and its own OnClose primes
+      it on the way out. }
+    if (FAudioWarmup > 0) and (GetTime >= FAudioWarmup) then
+    begin
+      FAudioWarmup := 0;
+      if not Paused and not Muted then PrimeAudio;
+    end;
+
     RunFrame;
     if Turbo then Continue;
 
