@@ -1120,7 +1120,7 @@ var
   Idle: Boolean;
   Files: TFilePathList;
   Filename, ErrorMessage: String;
-  Scale: Single;
+  Scale, PixelAspect: Single;
 begin
   if IsFileDropped then
   begin
@@ -1186,10 +1186,17 @@ begin
     else
       RectangleSet(@Dest, 0, 0, GetScreenWidth, GetScreenHeight);
 
+    { The render target is 352x288, not 4:3 - the 4:3 comes from Dest. Cropping
+      the overscan border in proportion to the target's own aspect keeps the
+      crop rect's aspect equal to the full frame's, so the trim is a uniform
+      zoom rather than a horizontal stretch that grows with the setting. }
+    PixelAspect := Target.texture.width / Target.texture.height;
+
     DrawTexturePro(
       Target.Texture,
-      RectangleCreate(Overscan * 1.33, Overscan, Target.texture.width - (2.66 * Overscan
-        ), - Target.texture.height + (2 * Overscan)),
+      RectangleCreate(Overscan * PixelAspect, Overscan,
+        Target.texture.width - (2 * PixelAspect * Overscan),
+        - Target.texture.height + (2 * Overscan)),
       Dest,
       Vector2Zero, 0, WHITE);
     EndShaderMode;
@@ -1334,7 +1341,7 @@ begin
       Sender.Value := BoolToStr(Fullscreen, 'yes', 'no');
     end);
 
-  Result.Root.AddItem('Aspect', BoolToStr(Fullscreen, '4:3', 'no'),
+  Result.Root.AddItem('Aspect', BoolToStr(Aspect, '4:3', 'no'),
   procedure(Sender: TMenuItem)
   begin
     Aspect := not Aspect;
