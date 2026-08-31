@@ -69,7 +69,7 @@ type
     procedure PageDown;
     procedure Home;
     procedure End_;
-    function Find(APrefix: String): Integer;
+    function Find(APrefix: String; AFrom: Integer = 0): Integer;
     constructor Create(AParent: TMenuItem = Nil); virtual;
     destructor Destroy; override;
   end;
@@ -304,7 +304,8 @@ begin
   Key := GetKeyPressed;
   if Key in [KEY_A..KEY_Z] then
   begin
-    I := Find(Char(Key - KEY_A + Ord('A')));
+    I := Find(Char(Key - KEY_A + Ord('A')), SelectedIndex + 1);
+    if I < 0 then I := Find(Char(Key - KEY_A + Ord('A')));
     if I >= 0 then SelectedIndex := I;
   end;
 
@@ -407,12 +408,12 @@ begin
   SelectedIndex := Items.Count - 1;
 end;
 
-function TMenuItem.Find(APrefix: String): Integer;
+function TMenuItem.Find(APrefix: String; AFrom: Integer): Integer;
 var
   I: Integer;
 begin
   Result := -1;
-  for I := 0 to Items.Count - 1 do
+  for I := AFrom to Items.Count - 1 do
     if Items[I].Text.StartsWith(APrefix, True) then Exit(I);
 end;
 
