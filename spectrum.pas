@@ -1213,7 +1213,6 @@ begin
 end;
 
 function TZXSpectrum48.LoadFromWave(const Wave: TWave): Boolean;
-{$PUSH}{$POINTERMATH ON}
 var
   Raw: TBytes;
 
@@ -1277,16 +1276,12 @@ begin
   FWavCursor := 0;
   SetLength(FWavEdges, 0);
 
-  try
-    if not IsWaveValid(Wave) then Exit;
-    { Collapse to centred 16-bit mono in the currency BuildEdges expects;
-      the native sample rate is kept so the edge timing is unchanged. }
-    WaveFormat(@Wave, Wave.sampleRate, 16, 1);
-    if (Wave.data = nil) or (Wave.frameCount = 0) then Exit;
-    BuildEdges;
-  finally
-    UnloadWave(Wave);
-  end;
+  if not IsWaveValid(Wave) then Exit;
+  { Collapse to centred 16-bit mono in the currency BuildEdges expects;
+    the native sample rate is kept so the edge timing is unchanged. }
+  WaveFormat(@Wave, Wave.sampleRate, 16, 1);
+  if not Assigned(Wave.data) or (Wave.frameCount = 0) then Exit;
+  BuildEdges;
 
   Result := Length(FWavEdges) > 0;
   if Result then
@@ -1300,8 +1295,6 @@ begin
     FTapeCursor := 0;
     SetLength(FTapeBlocks, 0);
   end;
-
-{$POP}
 end;
 
 function TZXSpectrum48.LoadWAV(const AFilename: String): Boolean;
@@ -1311,7 +1304,11 @@ begin
   Result := False;
   if not TFile.Exists(AFilename) then Exit;
   Wave := LoadWave(PChar(AFilename));
-  Result := LoadFromWave(Wave);
+  try
+    Result := LoadFromWave(Wave);
+  finally
+    UnloadWave(Wave);
+  end;
 end;
 
 function TZXSpectrum48.LoadWAV(const AStream: TStream): Boolean;
@@ -1327,7 +1324,11 @@ begin
   Buffer := autofree TMemoryStream.Create;
   Buffer.CopyFrom(AStream, Size);
   Wave := LoadWaveFromMemory('.wav', Buffer.Memory, Buffer.Size);
-  Result := LoadFromWave(Wave);
+  try
+    Result := LoadFromWave(Wave);
+  finally
+    UnloadWave(Wave);
+  end;
 end;
 
 end.
