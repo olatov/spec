@@ -465,9 +465,9 @@ end;
 
 destructor TMenuItem.Destroy;
 begin
-  inherited Destroy;
   FreeAndNil(FItems);
   FreeAndNil(FFilteredItems);
+  inherited Destroy;  
 end;
 
 constructor TEditMenuItem.Create(AParent: TMenuItem);
@@ -715,9 +715,9 @@ end;
 
 destructor TMenu.Destroy;
 begin
-  inherited Destroy;
   FreeAndNil(Root);
   UnloadRenderTexture(FTarget);
+  inherited Destroy;
 end;
 
 procedure TMenu.Close;

@@ -1299,7 +1299,7 @@ begin
             Stream := autofree TResourceStream.Create(
               HINSTANCE, 'GAME_' + TPath.GetFileName(Sender.Data), RT_RCDATA);
           {$else}
-            Stream := TFile.OpenRead(Sender.Data);
+            Stream := autofree TFile.OpenRead(Sender.Data);
           {$endif}
           { Picking a game from the catalog means "play this", so its tape is
             auto-loaded whether or not the setting is on. }
