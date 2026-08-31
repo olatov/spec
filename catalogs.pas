@@ -11,7 +11,7 @@ uses
   Raylib, OSDMenu;
 
 const
-  DefaultItemIndex = 4;
+  DefaultItemIndex = 0;
 
 type
   TCatalogItem = record
@@ -144,7 +144,13 @@ function TCatalogItem.GetPictureStream: TMemoryStream;
 var
   ResStream: TResourceStream;
 begin
-  ResStream := autofree TResourceStream.Create(HINSTANCE, 'PICTURE_' + Filename, RT_RCDATA);
+  Result := Nil;
+  try
+    ResStream := autofree TResourceStream.Create(HINSTANCE, 'PICTURE_' + Filename, RT_RCDATA);
+  except
+    on E: EResNotFound do Exit;
+  end;
+
   Result := TMemoryStream.Create;
   Result.CopyFrom(ResStream, ResStream.Size);
 end;
