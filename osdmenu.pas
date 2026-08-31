@@ -251,16 +251,17 @@ procedure TMenuItem.SetFilter(AValue: String);
 var
   I: Integer;
   Selected: TMenuItem;
+  Param: String;
 begin
+  FFilter := AValue;
   { The selection belongs to an item, not to a place in the list - typing a
     filter must not slide it onto whichever title lands at that place. }
   Selected := SelectedItem;
-  FFilter := AValue.Trim;
 
   FFilteredItems.Clear;
-
+  Param := AValue.Trim;
   for I := 0 to Items.Count - 1 do
-    if FFilter.IsEmpty or Items[I].Text.Contains(FFilter, True) then
+    if FFilter.IsEmpty or Items[I].Text.Contains(Param, True) then
       FilteredItems.Add(Items[I]);
 
   { A selection filtered away leaves the first match selected. }
@@ -337,7 +338,7 @@ begin
 
   Key := GetKeyPressed;
   case Key of
-    KEY_ZERO..KEY_NINE, KEY_A..KEY_Z:
+    KEY_ZERO..KEY_NINE, KEY_A..KEY_Z, KEY_PERIOD, KEY_SPACE:
       Filter := Filter + Char(Key - KEY_A + Ord('A'));
 
     KEY_BACKSPACE:
