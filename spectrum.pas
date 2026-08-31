@@ -854,11 +854,11 @@ begin
           end;
       end;
 
-      {$push}
+      {$PUSH}
       {$R-}
       CPU.ix_iy[0].word := CPU.ix_iy[0].word + ActualLen;
       CPU.de.word := RequestedLen - ActualLen;
-      {$pop}
+      {$POP}
 
       Ok := (ActualLen = RequestedLen) and (IsLoad or Ok);
     end;
@@ -871,10 +871,12 @@ begin
 
   { The caller (SAVE_ETC / LD_BLOCK) pushed SA_LD_RET before jumping here;
     simulate LD-BYTES's own RET back to it. }
+  {$PUSH}{$R-}
   RetLo := OnMemoryRead(CPU.sp.word);
   RetHi := OnMemoryRead(CPU.sp.word + 1);
   CPU.sp.word := CPU.sp.word + 2;
   CPU.pc.word := RetLo or (Word(RetHi) shl 8);
+  {$POP}
 end;
 
 function TZXSpectrum48.CurrentTStates: QWord; inline;
