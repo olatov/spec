@@ -561,7 +561,7 @@ begin
   FFrameBaseTState := FTotalTStates;
   Inc(FFrames);
   FCurrentScanline := 0;
-  FFlashPhase := Odd(Frames div 16);
+  FFlashPhase := Frames.Bits[4]; { Swaps every 16 frames }
 
   if FTapePlaying and not FTapeLoading
     and (FFrames - FTapeLastEarFrame > TapeSilenceFrames) then
