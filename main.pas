@@ -270,7 +270,16 @@ var
 
 { Runs on the audio device thread, on every device callback, whether or not
   anything is playing. Stays allocation- and lock-free: it only reads the
-  clock and bumps counters. }
+  clock and bumps counters.
+
+  Stack checking is off for this one routine (see $S- below). miniaudio's device
+  thread is not one FPC started, so the RTL's per-thread StackBottom for it is
+  never initialised and still holds the main thread's bounds. The device
+  thread's stack sits well outside those, so the -Ct prologue check here
+  mistakes the first callback for a stack overflow and raises RTE 202. The
+  body touches no threadvars, heap or exceptions, so skipping the check is
+  safe; the rest of the unit keeps it. }
+{$push}{$S-}
 procedure AudioStatsProbe(ABuffer: Pointer; AFrames: LongWord); cdecl;
 var
   Now: Double;
@@ -287,6 +296,7 @@ begin
     sees this unchanged knows the pair it holds is consistent. }
   Inc(Stats.FramesConsumed, AFrames);
 end;
+{$pop}
 
 { Reads the (frame count, timestamp) pair the probe maintains without stopping
   it, retrying while a callback lands in the middle. The callbacks are 10 ms
