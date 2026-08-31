@@ -5,7 +5,7 @@ unit OSDMenu;
 interface
 
 uses
-  Classes, SysUtils, Math, FGL,
+  Classes, SysUtils, Math, Generics.Collections,
   Raylib;
 
 type
@@ -27,8 +27,12 @@ type
   TMenuItem = class
   private
     FParent: TMenuItem;
+    FItems: TStringList;
+    FFilteredItems: TStringList;
+    FFilter: String;
     function GetMenu: TMenu; virtual;
     function GetSelectedItem: TMenuItem;
+    procedure SetFilter(AValue: String);
   public
     Font: TFont;
     Text: String;
@@ -36,8 +40,10 @@ type
     Data: String;          { the owner's payload - never drawn }
     Warning: String;       { drawn by the pages that have somewhere to put it }
     SelectedIndex: Integer;
-    Items: TStringList;
     OnApply: TMenuItemNotify;
+    property Items: TStringList read FItems;
+    property Filter: String read FFilter write SetFilter;
+    property FilteredItems: TStringList read FFilteredItems;
     property Parent: TMenuItem read FParent;
     property Menu: TMenu read GetMenu;
     property SelectedItem: TMenuItem read GetSelectedItem;
@@ -231,9 +237,29 @@ end;
 
 function TMenuItem.GetSelectedItem: TMenuItem;
 begin
-  Result := if SelectedIndex < Items.Count
-    then TMenuItem(Items.Objects[SelectedIndex])
+  Result := if SelectedIndex < FilteredItems.Count
+    then TMenuItem(FilteredItems.Objects[SelectedIndex])
     else Nil;
+end;
+
+procedure TMenuItem.SetFilter(AValue: String);
+var
+  I: Integer;
+begin
+  FFilter := AValue.Trim;
+
+  if FFilter.IsEmpty then
+  begin
+    FFilteredItems.SetStrings(FItems);
+    Exit;
+  end;
+
+  FFilteredItems.Clear;
+  SelectedIndex := 0;
+
+  for I := 0 to Items.Count - 1 do
+    if Items[I].Contains(Filter, True) then
+      FilteredItems.AddObject(Items[I], Items.Objects[I]);
 end;
 
 function TMenuItem.GetMenu: TMenu;
@@ -249,6 +275,7 @@ begin
   Result.Value := AValue;
   Result.OnApply := AOnApply;
   Items.AddObject(Result.Text, Result);
+  Filter := '';
 end;
 
 function TMenuItem.AddEdit(AText: String; APrompt: String; AOnAccept: TMenuEditNotify): TEditMenuItem;
@@ -259,6 +286,7 @@ begin
   Result.Prompt := APrompt;
   Result.OnAccept := AOnAccept;
   Items.AddObject(Result.Text, Result);
+  Filter := '';
 end;
 
 function TMenuItem.AddBrowser(AText: String; APath: String; AOnBrowse: TMenuBrowseNotify): TFileMenuItem;
@@ -269,6 +297,7 @@ begin
   Result.Path := APath;
   Result.OnBrowse := AOnBrowse;
   Items.AddObject(Result.Text, Result);
+  Filter := '';
 end;
 
 function TMenuItem.AddKey(AText: String; APrompt: String; AOnCapture: TMenuKeyNotify): TKeyMenuItem;
@@ -279,6 +308,7 @@ begin
   Result.Prompt := APrompt;
   Result.OnCapture := AOnCapture;
   Items.AddObject(Result.Text, Result);
+  Filter := '';
 end;
 
 procedure TMenuItem.Apply;
@@ -286,12 +316,11 @@ begin
   if Assigned(OnApply) then OnApply(Self);
   { OnApply may have filled the list (a browser building its entries), so the
     decision to open a page is made after it has run. }
-  if Items.Count > 0 then Menu.Show(Self);
+  if FilteredItems.Count > 0 then Menu.Show(Self);
 end;
 
 procedure TMenuItem.HandleInput;
 var
-  I: Integer;
   Key: TKeyboardKey;
 begin
   if IsKeyPressed(KEY_UP) or IsKeyPressedRepeat(KEY_UP) then Previous;
@@ -302,11 +331,12 @@ begin
   if IsKeyPressed(KEY_END) then End_;
 
   Key := GetKeyPressed;
-  if Key in [KEY_A..KEY_Z] then
-  begin
-    I := Find(Char(Key - KEY_A + Ord('A')), SelectedIndex + 1);
-    if I < 0 then I := Find(Char(Key - KEY_A + Ord('A')));
-    if I >= 0 then SelectedIndex := I;
+  case Key of
+    KEY_ZERO..KEY_NINE, KEY_A..KEY_Z:
+      Filter := Filter + Char(Key - KEY_A + Ord('A'));
+
+    KEY_BACKSPACE:
+      Filter := LeftStr(Filter, Max(Length(Filter) - 1, 0));
   end;
 
   if IsKeyPressed(KEY_ESCAPE) then
@@ -337,12 +367,17 @@ var
 begin
   Room := AWidth;
 
+  if not Filter.IsEmpty then
+    DrawTextEx(Font, PChar(Filter),
+      [490 - (MeasureText(PChar(Filter), 24) * 0.5), 12],
+      24, 0, YELLOW);
+
   { A list too long to show at once is labelled with the position in it. The
     label shares the top line with an item, so every line gives up the room it
     takes rather than only the one that would collide with it. }
-  if Items.Count > MenuVisibleItems then
+  if FilteredItems.Count > MenuVisibleItems then
   begin
-    Counter := $'{SelectedIndex + 1}/{Items.Count}';
+    Counter := $'{SelectedIndex + 1}/{FilteredItems.Count}';
     CounterWidth := MeasureTextEx(Font, PChar(Counter), 20, 0).x;
     Room := Room - CounterWidth - 12;
     DrawTextEx(Font, PChar(Counter),
@@ -352,11 +387,11 @@ begin
   { Scroll the window of items only when the selection would leave it, so
     short lists never move. }
   First := Max(0, Min(SelectedIndex - (MenuVisibleItems div 2),
-    Items.Count - MenuVisibleItems));
+    FilteredItems.Count - MenuVisibleItems));
 
-  for I := First to Min(First + MenuVisibleItems, Items.Count) - 1 do
+  for I := First to Min(First + MenuVisibleItems, FilteredItems.Count) - 1 do
   begin
-    Item := TMenuItem(Items.Objects[I]);
+    Item := TMenuItem(FilteredItems.Objects[I]);
 
     Line := Item.Text;
     if not Item.Value.IsEmpty then
@@ -375,27 +410,27 @@ end;
 
 procedure TMenuItem.Next;
 begin
-  if Items.Count = 0 then Exit;
-  SelectedIndex := (SelectedIndex + 1) mod Items.Count;
+  if FilteredItems.Count = 0 then Exit;
+  SelectedIndex := (SelectedIndex + 1) mod FilteredItems.Count;
 end;
 
 procedure TMenuItem.Previous;
 begin
-  if Items.Count = 0 then Exit;
-  SelectedIndex := (SelectedIndex - 1) mod Items.Count;
-  if SelectedIndex < 0 then SelectedIndex := Items.Count - 1;
+  if FilteredItems.Count = 0 then Exit;
+  SelectedIndex := (SelectedIndex - 1) mod FilteredItems.Count;
+  if SelectedIndex < 0 then SelectedIndex := FilteredItems.Count - 1;
 end;
 
 procedure TMenuItem.PageUp;
 begin
-  if Items.Count = 0 then Exit;
+  if FilteredItems.Count = 0 then Exit;
   SelectedIndex := Max(SelectedIndex - 10, 0);
 end;
 
 procedure TMenuItem.PageDown;
 begin
-  if Items.Count = 0 then Exit;
-  SelectedIndex := Min(SelectedIndex + 10, Items.Count - 1);
+  if FilteredItems.Count = 0 then Exit;
+  SelectedIndex := Min(SelectedIndex + 10, FilteredItems.Count - 1);
 end;
 
 procedure TMenuItem.Home;
@@ -405,7 +440,7 @@ end;
 
 procedure TMenuItem.End_;
 begin
-  SelectedIndex := Items.Count - 1;
+  SelectedIndex := FilteredItems.Count - 1;
 end;
 
 function TMenuItem.Find(APrefix: String; AFrom: Integer): Integer;
@@ -413,20 +448,22 @@ var
   I: Integer;
 begin
   Result := -1;
-  for I := AFrom to Items.Count - 1 do
-    if TMenuItem(Items.Objects[I]).Text.StartsWith(APrefix, True) then Exit(I);
+  for I := AFrom to FilteredItems.Count - 1 do
+    if TMenuItem(FilteredItems.Objects[I]).Text.StartsWith(APrefix, True) then Exit(I);
 end;
 
 constructor TMenuItem.Create(AParent: TMenuItem);
 begin
-  Items := TStringList.Create(True);
+  FItems := TStringList.Create(True);
+  FFilteredItems := TStringList.Create(False);
   FParent := AParent;
 end;
 
 destructor TMenuItem.Destroy;
 begin
   inherited Destroy;
-  FreeAndNil(Items);
+  FreeAndNil(FItems);
+  FreeAndNil(FFilteredItems);
 end;
 
 constructor TEditMenuItem.Create(AParent: TMenuItem);
@@ -544,6 +581,7 @@ begin
   Path := APath;
   Warning := '';
   Items.Clear;
+  FilteredItems.Clear;
   SelectedIndex := 0;
   if Assigned(OnBrowse) then OnBrowse(Self);
 end;
@@ -611,7 +649,8 @@ end;
 
 constructor TRootMenuItem.Create(AParent: TMenu);
 begin
-  Items := TStringList.Create(True);
+  FItems := TStringList.Create(True);
+  FFilteredItems := TStringList.Create(False);
   FMenu := AParent;
 end;
 
