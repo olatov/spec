@@ -5,7 +5,7 @@ unit OSDMenu;
 interface
 
 uses
-  Classes, SysUtils, Math, Generics.Collections,
+  Classes, SysUtils, Math, FGL,
   Raylib;
 
 type
@@ -19,6 +19,7 @@ type
   TMenuEditNotify = reference to procedure(ASender: TEditMenuItem);
   TMenuBrowseNotify = reference to procedure(ASender: TFileMenuItem);
   TMenuKeyNotify = reference to procedure(ASender: TKeyMenuItem; AKey: TKeyboardKey);
+  TMenuItemList = TFPGObjectList<TMenuItem>;
 
   { One entry in the menu, and - for items that have children or are a dialog -
     also the page that entry opens. The menu shows exactly one item's page at a
@@ -27,8 +28,8 @@ type
   TMenuItem = class
   private
     FParent: TMenuItem;
-    FItems: TStringList;
-    FFilteredItems: TStringList;
+    FItems: TMenuItemList;
+    FFilteredItems: TMenuItemList;
     FFilter: String;
     function GetMenu: TMenu; virtual;
     function GetSelectedItem: TMenuItem;
@@ -41,9 +42,9 @@ type
     Warning: String;       { drawn by the pages that have somewhere to put it }
     SelectedIndex: Integer;
     OnApply: TMenuItemNotify;
-    property Items: TStringList read FItems;
+    property Items: TMenuItemList read FItems;
     property Filter: String read FFilter write SetFilter;
-    property FilteredItems: TStringList read FFilteredItems;
+    property FilteredItems: TMenuItemList read FFilteredItems;
     property Parent: TMenuItem read FParent;
     property Menu: TMenu read GetMenu;
     property SelectedItem: TMenuItem read GetSelectedItem;
@@ -238,7 +239,7 @@ end;
 function TMenuItem.GetSelectedItem: TMenuItem;
 begin
   Result := if InRange(SelectedIndex, 0, FilteredItems.Count - 1)
-    then TMenuItem(FilteredItems.Objects[SelectedIndex])
+    then FilteredItems[SelectedIndex]
     else Nil;
 end;
 
@@ -258,11 +259,11 @@ begin
   FFilteredItems.Clear;
 
   for I := 0 to Items.Count - 1 do
-    if FFilter.IsEmpty or Items[I].Contains(FFilter, True) then
-      FilteredItems.AddObject(Items[I], Items.Objects[I]);
+    if FFilter.IsEmpty or Items[I].Text.Contains(FFilter, True) then
+      FilteredItems.Add(Items[I]);
 
   { A selection filtered away leaves the first match selected. }
-  SelectedIndex := Max(FilteredItems.IndexOfObject(Selected), 0);
+  SelectedIndex := Max(FilteredItems.IndexOf(Selected), 0);
 end;
 
 function TMenuItem.GetMenu: TMenu;
@@ -277,7 +278,7 @@ begin
   Result.Text := AText;
   Result.Value := AValue;
   Result.OnApply := AOnApply;
-  Items.AddObject(Result.Text, Result);
+  Items.Add(Result);
   Filter := '';
 end;
 
@@ -288,7 +289,7 @@ begin
   Result.Text := AText;
   Result.Prompt := APrompt;
   Result.OnAccept := AOnAccept;
-  Items.AddObject(Result.Text, Result);
+  Items.Add(Result);
   Filter := '';
 end;
 
@@ -299,7 +300,7 @@ begin
   Result.Text := AText;
   Result.Path := APath;
   Result.OnBrowse := AOnBrowse;
-  Items.AddObject(Result.Text, Result);
+  Items.Add(Result);
   Filter := '';
 end;
 
@@ -310,7 +311,7 @@ begin
   Result.Text := AText;
   Result.Prompt := APrompt;
   Result.OnCapture := AOnCapture;
-  Items.AddObject(Result.Text, Result);
+  Items.Add(Result);
   Filter := '';
 end;
 
@@ -394,7 +395,7 @@ begin
 
   for I := First to Min(First + MenuVisibleItems, FilteredItems.Count) - 1 do
   begin
-    Item := TMenuItem(FilteredItems.Objects[I]);
+    Item := FilteredItems[I];
 
     Line := Item.Text;
     if not Item.Value.IsEmpty then
@@ -452,13 +453,13 @@ var
 begin
   Result := -1;
   for I := AFrom to FilteredItems.Count - 1 do
-    if TMenuItem(FilteredItems.Objects[I]).Text.StartsWith(APrefix, True) then Exit(I);
+    if FilteredItems[I].Text.StartsWith(APrefix, True) then Exit(I);
 end;
 
 constructor TMenuItem.Create(AParent: TMenuItem);
 begin
-  FItems := TStringList.Create(True);
-  FFilteredItems := TStringList.Create(False);
+  FItems := TMenuItemList.Create(True);
+  FFilteredItems := TMenuItemList.Create(False);
   FParent := AParent;
 end;
 
@@ -652,8 +653,8 @@ end;
 
 constructor TRootMenuItem.Create(AParent: TMenu);
 begin
-  FItems := TStringList.Create(True);
-  FFilteredItems := TStringList.Create(False);
+  FItems := TMenuItemList.Create(True);
+  FFilteredItems := TMenuItemList.Create(False);
   FMenu := AParent;
 end;
 

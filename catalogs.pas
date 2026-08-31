@@ -275,7 +275,7 @@ begin
   Result := TCatalogMenuItem.Create(AParent);
   Result.Font := AParent.Font;
   Result.Text := 'Catalog';
-  AParent.Items.AddObject(Result.Text, Result);
+  AParent.Items.Add(Result);
 
   for Item in Catalog.Items do
     Result.AddItem(Item.Name, '', AOnOpen).Data := Item.Path;
@@ -334,7 +334,7 @@ begin
     in the page's own list is its place in the catalog. Its place in the shown
     list is not, once a filter has taken titles out of the middle - so the
     picture is looked up by the entry, never by the selection index. }
-  Index := Items.IndexOfObject(SelectedItem);
+  Index := Items.IndexOf(SelectedItem);
   if Index <> FPictureIndex then ShowPicture(Index);
   if Index >= 0 then Catalog.CurrentItemIndex := Index;
 
