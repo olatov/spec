@@ -47,11 +47,18 @@ type
     property Keys: TArray<TKeyboardKey> read GetKeys;
   end;
 
+  TKeySimulatorJoystick = class(TJoystick);
+
   TKempstonJoystick = class(TJoystick)
     function Poll(APort: Word): Byte; override;
   end;
 
-  TCursorJoystick = class(TJoystick)
+  TCursorJoystick = class(TKeySimulatorJoystick)
+    function Poll(APort: Word): Byte; override;
+  end;
+
+  TSpanishJoystick = class(TKeySimulatorJoystick)
+    { OPQAM }
     function Poll(APort: Word): Byte; override;
   end;
 
@@ -164,6 +171,35 @@ begin
   if not APort.Bits[11] then
     { $F7FE }
     Result.Bits[4] := Result.Bits[4] or Left;
+
+  Result := not Result;
+end;
+
+function TSpanishJoystick.Poll(APort: Word): Byte;
+begin
+  Result := 0;
+
+  { $FDFE }
+  if not APort.Bits[9] then
+    Result.Bits[0] := Result.Bits[0] or Down; { A }
+
+  { $FBFE }
+  if not APort.Bits[10] then
+    Result.Bits[0] := Result.Bits[0] or Up; { Q }
+
+  { $DFFE }
+  if not APort.Bits[13] then
+  begin
+    Result.Bits[0] := Result.Bits[0] or Right; { P }
+    Result.Bits[1] := Result.Bits[1] or Left;  { O }
+  end;
+
+  { $7FFE }
+  if not APort.Bits[15] then
+  begin
+    Result.Bits[0] := Result.Bits[0] or Fire2; { Space }
+    Result.Bits[2] := Result.Bits[2] or Fire1; { M }
+  end;
 
   Result := not Result;
 end;

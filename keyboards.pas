@@ -244,9 +244,9 @@ begin
   Result := 0;
   Data := 0;
 
+  { $FEFE }
   if not APort.Bits[8] then
   begin
-    { $FEFE }
     for Key in CapsShiftKeys do
       Data.Bits[0] := Data.Bits[0] or IsKeyDown(Key);
 
@@ -258,9 +258,9 @@ begin
     Result := Result or Data;
   end;
 
+  { $FDFE }
   if not APort.Bits[9] then
   begin
-    { $FDFE }
     Data.Bits[0] := IsKeyDown(KEY_A);
     Data.Bits[1] := IsKeyDown(KEY_S);
     Data.Bits[2] := IsKeyDown(KEY_D);
@@ -269,9 +269,9 @@ begin
     Result := Result or Data;
   end;
 
+  { $FBFE }
   if not APort.Bits[10] then
   begin
-    { $FBFE }
     Data.Bits[0] := IsKeyDown(KEY_Q);
     Data.Bits[1] := IsKeyDown(KEY_W);
     Data.Bits[2] := IsKeyDown(KEY_E);
@@ -280,9 +280,9 @@ begin
     Result := Result or Data;
   end;
 
+  { $F7FE }
   if not APort.Bits[11] then
   begin
-    { $F7FE }
     Data.Bits[0] := IsKeyDown(KEY_ONE);
     Data.Bits[1] := IsKeyDown(KEY_TWO);
     Data.Bits[2] := IsKeyDown(KEY_THREE);
@@ -291,9 +291,9 @@ begin
     Result := Result or Data;
   end;
 
+  { $EFFE }
   if not APort.Bits[12] then
   begin
-    { $EFFE }
     Data.Bits[0] := IsKeyDown(KEY_ZERO) or IsKeyDown(KEY_BACKSPACE);
     Data.Bits[1] := IsKeyDown(KEY_NINE);
     Data.Bits[2] := IsKeyDown(KEY_EIGHT);
@@ -302,9 +302,9 @@ begin
     Result := Result or Data;
   end;
 
+  { $DFFE }
   if not APort.Bits[13] then
   begin
-    { $DFFE }
     Data.Bits[0] := IsKeyDown(KEY_P);
     Data.Bits[1] := IsKeyDown(KEY_O);
     Data.Bits[2] := IsKeyDown(KEY_I);
@@ -313,9 +313,9 @@ begin
     Result := Result or Data;
   end;
 
+  { $BFFE }
   if not APort.Bits[14] then
   begin
-    { $BFFE }
     Data.Bits[0] := IsKeyDown(KEY_ENTER);
     Data.Bits[1] := IsKeyDown(KEY_L)
       or IsKeyDown(KEY_EQUAL);
@@ -327,9 +327,9 @@ begin
     Result := Result or Data;
   end;
 
+  { $7FFE }
   if not APort.Bits[15] then
   begin
-    { $7FFE }
     Data.Bits[0] := IsKeyDown(KEY_SPACE);
 
     Data.Bits[1] := IsKeyDown(KEY_KP_ADD)

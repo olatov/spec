@@ -315,8 +315,8 @@ begin
   begin
     if Contended then Wait(2);
     Result := Result and Keyboard.Poll(AAddress);
-    if (Joystick is TCursorJoystick) then
-      Result := Result and TCursorJoystick(Joystick).Poll(AAddress);
+    if (Joystick is TKeySimulatorJoystick) then
+      Result := Result and Joystick.Poll(AAddress);
 
     { EAR (bit 6): fed from the WAV tape while one is loaded, so the ROM /
       turbo loader can time the edges. Overrides the idle "no signal" 1. }
@@ -461,6 +461,7 @@ begin
   Joysticks.Add(Nil); { No joystick }
   Joysticks.Add(TKempstonJoystick.Create);
   Joysticks.Add(TCursorJoystick.Create);
+  Joysticks.Add(TSpanishJoystick.Create);
 
   Reset;
 end;
@@ -1081,6 +1082,8 @@ begin
     Result := 'Kempston'
   else if Joystick is TCursorJoystick then
     Result := 'Cursor'
+  else if Joystick is TSpanishJoystick then
+    Result := 'Spanish (QAOPM)'
   else
     Result := '?'; { Should not happen }
 end;
