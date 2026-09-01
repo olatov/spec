@@ -12,7 +12,6 @@ type
   TKeyboard = class
   private
     FHeldOver: TKeyboardKey;
-    procedure BuildKeyRects;
     function GetBreakSpaceKey: TKeyboardKey;
     function GetCapsShiftKey: TKeyboardKey;
     class function GetKeyName(AKey: TKeyboardKey): String; static;
@@ -23,6 +22,7 @@ type
     CapsShiftKeys: TArray<TKeyboardKey>;
     BreakSpaceKeys: TArray<TKeyboardKey>;
     KeyRects: TFPGMap<TKeyboardKey, TRectangle>;
+    procedure BuildKeyRects;
     property SymbolShiftKey: TKeyboardKey read GetSymbolShiftKey;
     property CapsShiftKey: TKeyboardKey read GetCapsShiftKey;
     property BreakSpaceKey: TKeyboardKey read GetBreakSpaceKey;

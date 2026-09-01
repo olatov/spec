@@ -1051,6 +1051,15 @@ begin
   Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
   Machine.OnTapeSaved := @TapeSaved;
 
+  Machine.Keyboard.CapsShiftKeys := [
+    Config.ReadInteger('Keyboard', 'CapsShift', KEY_LEFT_SHIFT)];
+  Machine.Keyboard.SymbolShiftKeys := [
+    Config.ReadInteger('Keyboard', 'SymbolShiftKey',
+      {$ifdef darwin} KEY_RIGHT_ALT {$else} KEY_RIGHT_CONTROL {$endif})];
+  Machine.Keyboard.BreakSpaceKeys := [
+    Config.ReadInteger('Keyboard', 'CapsShift', KEY_SPACE)];
+  Machine.Keyboard.BuildKeyRects;
+
   TapeAutoLoad := Config.ReadBool('Tape', 'AutoLoad', True)
     or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty;
 
@@ -1078,7 +1087,7 @@ begin
 
   Target := LoadRenderTexture(352, 288);
   SetTextureFilter(Target.texture,
-     if Config.ReadBool('Video', 'Filter', True)
+     if Config.ReadBool('Display', 'Filter', True)
       then TEXTURE_FILTER_BILINEAR
       else TEXTURE_FILTER_POINT);
 
@@ -1852,6 +1861,10 @@ begin
   Config.WriteInteger('Display', 'Overscan', Overscan);
   Config.WriteBool('Display', 'Aspect', Aspect);
   Config.WriteFloat('Display', 'Curvature', Curvature);
+
+  Config.WriteInteger('Keyboard', 'CapsShift', Machine.Keyboard.CapsShiftKey);
+  Config.WriteInteger('Keyboard', 'SymbolShiftKey', Machine.Keyboard.SymbolShiftKey);
+  Config.WriteInteger('Keyboard', 'BreakSpaceKey', Machine.Keyboard.BreakSpaceKey);
 
   Config.WriteFloat('Audio', 'Volume', AudioVolume);
   Config.WriteBool('Audio', 'Muted', Muted);
