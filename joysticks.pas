@@ -11,7 +11,8 @@ uses
 type
   { The six things a joystick can report. }
   TJoystickControl = (jcLeft, jcRight, jcUp, jcDown, jcFire1, jcFire2);
-  TJoystickBindings = array[TJoystickControl] of TKeyboardKey;
+  TJoystickKeyBindings = array[TJoystickControl] of TKeyboardKey;
+  TJoystickGamepadBindings = array[TJoystickControl] of TGamepadButton;
 
   { The interface a game reads its stick through. Which host keys stand for the
     stick is not part of that - the player has one set of movement keys, and
@@ -19,6 +20,7 @@ type
     so the bindings are shared by every joystick rather than owned by one. }
   TJoystick = class abstract
   private
+    class var FIsGamepadAvailable: Boolean;
     function GetDown: Boolean;
     function GetFire1: Boolean;
     function GetFire2: Boolean;
@@ -27,9 +29,10 @@ type
     function GetRight: Boolean;
     function GetUp: Boolean;
   public
-    class var Bindings: TJoystickBindings;
+    class var KeyBindings: TJoystickKeyBindings;
+    class var GamepadBindings: TJoystickGamepadBindings;
     class var GamepadIndex: TNullable<Integer>;
-    { The built-in bindings, also what an absent config setting falls back to. }
+    { The built-in KeyBindings, also what an absent config setting falls back to. }
     class procedure ResetBindings; static;
     { True while the key bound to AControl is held. An unbound control (its
       binding cleared to KEY_NULL) is never down. }
@@ -37,7 +40,7 @@ type
     { Clears every other control bound to AKey, so one keystroke can never
       mean two directions at once. }
     class procedure Bind(AControl: TJoystickControl; AKey: TKeyboardKey); static;
-    function Poll(APort: Word): Byte; virtual; abstract;
+    function Poll(APort: Word): Byte; virtual;
     property Left: Boolean read GetLeft;
     property Right: Boolean read GetRight;
     property Up: Boolean read GetUp;
@@ -66,28 +69,37 @@ const
   { Both the label a binding is shown under and the config key it is written
     as - a name here is part of the config format. }
   JoystickControlNames: array[TJoystickControl] of String =
-    ('Left', 'Right', 'Up', 'Down', 'Fire1', 'Fire2');
+    ('Left', 'Right', 'Up', 'Down', 'Fire 1', 'Fire 2');
 
 implementation
 
 class procedure TJoystick.ResetBindings; static;
 begin
-  Bindings[jcLeft] := KEY_LEFT;
-  Bindings[jcRight] := KEY_RIGHT;
-  Bindings[jcUp] := KEY_UP;
-  Bindings[jcDown] := KEY_DOWN;
+  KeyBindings[jcLeft] := KEY_LEFT;
+  KeyBindings[jcRight] := KEY_RIGHT;
+  KeyBindings[jcUp] := KEY_UP;
+  KeyBindings[jcDown] := KEY_DOWN;
   {$ifdef Darwin}
-    Bindings[jcFire1] := KEY_LEFT_SUPER;
-    Bindings[jcFire2] := KEY_RIGHT_SUPER;
+    KeyBindings[jcFire1] := KEY_LEFT_SUPER;
+    KeyBindings[jcFire2] := KEY_RIGHT_SUPER;
   {$else}
-    Bindings[jcFire1] := KEY_LEFT_ALT;
-    Bindings[jcFire2] := KEY_RIGHT_ALT;
+    KeyBindings[jcFire1] := KEY_LEFT_ALT;
+    KeyBindings[jcFire2] := KEY_RIGHT_ALT;
   {$endif}
+
+  GamepadBindings[jcLeft] := GAMEPAD_BUTTON_LEFT_FACE_LEFT;
+  GamepadBindings[jcRight] := GAMEPAD_BUTTON_LEFT_FACE_RIGHT;
+  GamepadBindings[jcUp] := GAMEPAD_BUTTON_LEFT_FACE_UP;
+  GamepadBindings[jcDown] := GAMEPAD_BUTTON_LEFT_FACE_DOWN;
+  GamepadBindings[jcFire1] := GAMEPAD_BUTTON_RIGHT_FACE_DOWN;
+  GamepadBindings[jcFire2] := GAMEPAD_BUTTON_RIGHT_FACE_LEFT;
 end;
 
 class function TJoystick.IsDown(AControl: TJoystickControl): Boolean; static;
 begin
-  Result := (Bindings[AControl] <> KEY_NULL) and IsKeyDown(Bindings[AControl]);
+  Result := (KeyBindings[AControl] <> KEY_NULL) and IsKeyDown(KeyBindings[AControl]);
+  if FIsGamepadAvailable then
+    Result := Result or IsGamepadButtonDown(GamepadIndex.Value, GamepadBindings[AControl]);
 end;
 
 class procedure TJoystick.Bind(AControl: TJoystickControl; AKey: TKeyboardKey); static;
@@ -96,57 +108,59 @@ var
 begin
   if AKey <> KEY_NULL then
     for Control := Low(TJoystickControl) to High(TJoystickControl) do
-      if (Control <> AControl) and (Bindings[Control] = AKey) then
-        Bindings[Control] := KEY_NULL;
+      if (Control <> AControl) and (KeyBindings[Control] = AKey) then
+        KeyBindings[Control] := KEY_NULL;
 
-  Bindings[AControl] := AKey;
+  KeyBindings[AControl] := AKey;
+end;
+
+function TJoystick.Poll(APort: Word): Byte;
+begin
+  Result := 0;
+  FIsGamepadAvailable := GamepadIndex.HasValue
+    and Raylib.IsGamepadAvailable(GamepadIndex.Value);
 end;
 
 function TJoystick.GetKeys: TArray<TKeyboardKey>;
 begin
-  Result := [Bindings[jcLeft], Bindings[jcRight], Bindings[jcUp],
-    Bindings[jcDown], Bindings[jcFire1], Bindings[jcFire2]];
+  Result := [KeyBindings[jcLeft], KeyBindings[jcRight], KeyBindings[jcUp],
+    KeyBindings[jcDown], KeyBindings[jcFire1], KeyBindings[jcFire2]];
 end;
 
 function TJoystick.GetDown: Boolean;
 begin
   Result := IsDown(jcDown);
-  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex.Value, GAMEPAD_BUTTON_LEFT_FACE_DOWN));
 end;
 
 function TJoystick.GetFire1: Boolean;
 begin
   Result := IsDown(jcFire1);
-  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
 end;
 
 function TJoystick.GetFire2: Boolean;
 begin
   Result := IsDown(jcFire2);
-  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_RIGHT_FACE_LEFT));
 end;
 
 function TJoystick.GetLeft: Boolean;
 begin
   Result := IsDown(jcLeft);
-  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_LEFT_FACE_LEFT));
 end;
 
 function TJoystick.GetRight: Boolean;
 begin
   Result := IsDown(jcRight);
-  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_LEFT_FACE_RIGHT));
 end;
 
 function TJoystick.GetUp: Boolean;
 begin
   Result := IsDown(jcUp);
-  Result := Result or (GamePadIndex.HasValue and IsGamepadButtonDown(GamepadIndex, GAMEPAD_BUTTON_LEFT_FACE_UP));
 end;
 
 function TKempstonJoystick.Poll(APort: Word): Byte;
 begin
-  Result := 0;
+  Result := inherited Poll(APort);
+
   Result.Bits[0] := Right;
   Result.Bits[1] := Left;
   Result.Bits[2] := Down;
@@ -157,7 +171,7 @@ end;
 
 function TCursorJoystick.Poll(APort: Word): Byte;
 begin
-  Result := 0;
+  Result := inherited Poll(APort);
 
   if not APort.Bits[12] then
   begin
@@ -177,7 +191,7 @@ end;
 
 function TSpanishJoystick.Poll(APort: Word): Byte;
 begin
-  Result := 0;
+  Result := inherited Poll(APort);
 
   { $FDFE }
   if not APort.Bits[9] then

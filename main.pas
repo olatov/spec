@@ -1100,9 +1100,9 @@ begin
     config would have it, so an unreadable or absent setting costs that one
     control rather than the lot. }
   for Control := Low(TJoystickControl) to High(TJoystickControl) do
-    TJoystick.Bindings[Control] := TKeyboard.KeyFromId(
+    TJoystick.KeyBindings[Control] := TKeyboard.KeyFromId(
       Config.ReadString('Joystick', JoystickControlNames[Control],
-        TKeyboard.KeyId[TJoystick.Bindings[Control]]));
+        TKeyboard.KeyId[TJoystick.KeyBindings[Control]]));
 
   Target := LoadRenderTexture(352, 288);
   TVType := TTvType(Config.ReadInteger('Display', 'TVType', Ord(tvColor))
@@ -1484,7 +1484,7 @@ begin
     Item := APage.Items[I];
     if Item is TKeyMenuItem then
       Item.Value := TKeyboard.KeyName[
-        TJoystick.Bindings[TJoystickControl(StrToInt(Item.Data))]];
+        TJoystick.KeyBindings[TJoystickControl(StrToInt(Item.Data))]];
   end;
 end;
 
@@ -1896,7 +1896,7 @@ begin
 
   for Control := Low(TJoystickControl) to High(TJoystickControl) do
     Config.WriteString('Joystick', JoystickControlNames[Control],
-      TKeyboard.KeyId[TJoystick.Bindings[Control]]);
+      TKeyboard.KeyId[TJoystick.KeyBindings[Control]]);
 end;
 
 { Paints every border pixel the beam has swept between BorderT and AT in the
