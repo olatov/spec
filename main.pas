@@ -44,6 +44,8 @@ type
 
   TApplication = class(TComponent)
   private
+    function GetQuickSaveFilename: String;
+  private
     FFullscreen: Boolean;
     Config: TIniFile;
     FMuted: Boolean;
@@ -57,6 +59,7 @@ type
     { GetTime deadline for a one-shot re-prime of the audio stream after the
       device has warmed up, or 0 when none is pending. See Run. }
     FAudioWarmup: Double;
+    property QuickSaveFilename: String read GetQuickSaveFilename;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
     procedure AddControlsPage(AParent: TMenuItem);
@@ -507,19 +510,16 @@ begin
 end;
 
 function TApplication.QuickLoad: Boolean;
-var
-  Filename: String;
 begin
-  Filename := TPath.Combine(SavePath, 'quicksave.z80');
-  if not TFile.Exists(Filename) then Exit(False);
-
-  Machine.LoadZ80(Filename);
+  Result := False;
+  if not TFile.Exists(QuickSaveFilename) then Exit;
+  Machine.LoadZ80(QuickSaveFilename);
   Result := True;
 end;
 
 procedure TApplication.QuickSave;
 begin
-  Machine.SaveZ80(TPath.Combine(SavePath, 'quicksave.z80'));
+  Machine.SaveZ80(QuickSaveFilename);
 end;
 
 { Where named snapshots live. An unset [Files] SavePath means "next to the
@@ -798,6 +798,15 @@ end;
   weight (rather than summing) keeps the result inside the bucket duration, so the sample
   can never clip; with the tape idle the beeper keeps the full weight and the output is
   bit-identical to before. }
+
+function TApplication.GetQuickSaveFilename: String;
+begin
+  Result := if CurrentFile.IsEmpty
+    then 'spec'
+    else TPath.GetFileNameWithoutExtension(CurrentFile);
+
+  Result := TPath.Combine(SavePath, Result + '_quicksave.z80');
+end;
 
 procedure TApplication.AdvanceAudio(NewT: Integer);
   function BucketBoundary(Index: Integer): Integer; inline;
