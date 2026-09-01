@@ -42,6 +42,8 @@ type
     Countdown: Double;
   end;
 
+  TTVType = (tvColor = 0, tvBW, tvModernSmooth, tvModernSharp, tvModernScaleFX);
+
   TApplication = class(TComponent)
   private
     function GetQuickSaveFilename: String;
@@ -52,6 +54,7 @@ type
     FTapeAutoLoad: Boolean;
     FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
     FQuitTimer: TSimpleTimer;
+    FTVType: TTVType;
     FAutoLoad: record
       Active: Boolean;
       Frame: Integer;
@@ -59,6 +62,7 @@ type
     { GetTime deadline for a one-shot re-prime of the audio stream after the
       device has warmed up, or 0 when none is pending. See Run. }
     FAudioWarmup: Double;
+    procedure SetTVType(AValue: TTVType);
     property QuickSaveFilename: String read GetQuickSaveFilename;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
@@ -89,6 +93,7 @@ type
     procedure SetVolume(AVolume: Single; K: Single = 4);
     procedure PrimeAudio;
     function AutoLoadAction(Frame: Int64): Boolean;
+    procedure SwitchTVType;
   public
     Machine: TZXSpectrum48;
     AudioStream: TAudioStream;
@@ -108,9 +113,8 @@ type
     AutoLoadFrame: Int64;
     SavePath: String;
     BrowsePath: String;   { folder the Load browser last showed }
-    Shaders: array[0..2] of TShader;
+    Shaders: array[Low(TTVType)..High(TTvType)] of TShader;
     TapeSound: Boolean;   { [Tape] Sound - play tape noise through the speaker }
-    TVType: Byte;
     Palette: array[0..15] of TColorB;
     AttrColors: array[0..1] of TAttrTable;
     Pixels: PPixels;
@@ -122,6 +126,7 @@ type
     Aspect: Boolean;
     Curvature: Single;
     Turbo: Boolean;
+    property TVType: TTVType read FTVType write SetTVType;
     property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
       down in real time, so it is filled in lazily: whenever the colour is
@@ -144,10 +149,6 @@ type
   end;
 
 const
-  TVTypeColor = 0;
-  TVTypeBW = 1;
-  TVTypeModern = 2;
-
   ImageWidth = 352;
   ImageHeight = 288;
   ScanlineTStates = 224;
@@ -189,7 +190,9 @@ const
     (it's internal to rcore.c) - these two values are its first two entries. }
   INPUT_KEY_UP = 1;
   INPUT_KEY_DOWN = 2;
-  TVTypeNames: array[0..2] of String = ('Colour CRT', 'B/W CRT', 'Modern');
+  TVTypeNames: array[Low(TTVType)..High(TTvType)] of String = (
+    'Colour CRT', 'B/W CRT', 'Modern (smooth)', 'Modern (sharp)',
+    'Modern (scaleFX)');
 
   { What the file browser offers and LoadFile knows how to open. Anything else
     is left out of the list rather than failing once it is picked. }
@@ -213,6 +216,7 @@ var
   {$embedstr ShaderTextColor 'shaders/shader_color.fs'}
   {$embedstr ShaderTextBW 'shaders/shader_bw.fs'}
   {$embedstr ShaderTextModern 'shaders/shader_modern.fs'}
+  {$embedstr ShaderTextModernScaleFX 'shaders/shader_modern_scalefx.fs'}
 
 implementation
 
@@ -808,6 +812,16 @@ begin
   Result := TPath.Combine(SavePath, Result + '_quicksave.z80');
 end;
 
+procedure TApplication.SetTVType(AValue: TTVType);
+begin
+  FTVType := AValue;
+  SetTextureFilter(
+    Target.texture,
+    if TVType in [tvModernSharp{, tvModernScaleFX}]
+      then TEXTURE_FILTER_POINT
+      else TEXTURE_FILTER_BILINEAR);
+end;
+
 procedure TApplication.AdvanceAudio(NewT: Integer);
   function BucketBoundary(Index: Integer): Integer; inline;
   begin
@@ -887,6 +901,11 @@ begin
   Result := True;
 end;
 
+procedure TApplication.SwitchTVType;
+begin
+  TVType := if TVType < High(TTVType) then Succ(TVType) else Low(TTVType);
+end;
+
 procedure SetOSD(AText: String; ADuration: Double = 2);
 begin
   OSD.Text := AText;
@@ -944,7 +963,7 @@ end;
 
 destructor TApplication.Destroy;
 var
-  I: Integer;
+  T: TTVType;
 begin
   inherited Destroy;
 
@@ -961,8 +980,8 @@ begin
 
   if IsFontValid(Font) then UnloadFont(Font);
 
-  for I := 0 to High(Shaders) do
-    if IsShaderValid(Shaders[I]) then UnloadShader(Shaders[I]);
+  for T := Low(TTVType) to High(TTvType) do
+    if IsShaderValid(Shaders[T]) then UnloadShader(Shaders[T]);
 
   if IsRenderTextureValid(Target) then UnloadRenderTexture(Target);
   if IsTextureValid(Video) then UnloadTexture(Video);
@@ -997,6 +1016,7 @@ procedure TApplication.Initialize;
 
 var
   I: Integer;
+  T: TTVType;
   Control: TJoystickControl;
   LinesCount: Single = 256;
 begin
@@ -1043,7 +1063,6 @@ begin
 
   Font := Self.LoadFont;
 
-  TVType := Config.ReadInteger('Display', 'TVType', TVTypeColor) mod Length(Shaders);
   Overscan := Config.ReadInteger('Display', 'Overscan', 16);
   Aspect := Config.ReadBool('Display', 'Aspect', True);
   Curvature := Config.ReadFloat('Display', 'Curvature', 7.0);
@@ -1086,21 +1105,22 @@ begin
         TKeyboard.KeyId[TJoystick.Bindings[Control]]));
 
   Target := LoadRenderTexture(352, 288);
-  SetTextureFilter(Target.texture,
-     if Config.ReadBool('Display', 'Filter', True)
-      then TEXTURE_FILTER_BILINEAR
-      else TEXTURE_FILTER_POINT);
+  TVType := TTvType(Config.ReadInteger('Display', 'TVType', Ord(tvColor))
+    mod (Ord(High(TTvType)) + 1));
 
-  Shaders[TVTypeColor] := LoadShaderFromMemory(Nil, @ShaderTextColor[1]);
-  Shaders[TVTypeBW] := LoadShaderFromMemory(Nil, @ShaderTextBW[1]);
-  Shaders[TVTypeModern] := LoadShaderFromMemory(Nil, @ShaderTextModern[1]);
+  Shaders[tvColor] := LoadShaderFromMemory(Nil, @ShaderTextColor[1]);
+  Shaders[tvBW] := LoadShaderFromMemory(Nil, @ShaderTextBW[1]);
+  Shaders[tvModernSmooth] := LoadShaderFromMemory(Nil, @ShaderTextModern[1]);
+  Shaders[tvModernSharp] := LoadShaderFromMemory(Nil, @ShaderTextModern[1]);
+  Shaders[tvModernScaleFX] :=
+    LoadShaderFromMemory(Nil, @ShaderTextModernScaleFX[1]);
 
-  for I := 0 to High(Shaders) do
+  for T := Low(TTvType) to High(TTvType) do
   begin
-    SetShaderValue(Shaders[I],
-      GetShaderLocation(Shaders[I], 'lines'), @LinesCount, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(Shaders[I],
-      GetShaderLocation(Shaders[I], 'curvature'), @Curvature, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(Shaders[T],
+      GetShaderLocation(Shaders[T], 'lines'), @LinesCount, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(Shaders[T],
+      GetShaderLocation(Shaders[T], 'curvature'), @Curvature, SHADER_UNIFORM_FLOAT);
   end;
 
   KeyboardTexture := LoadKeyboardTexture;
@@ -1372,7 +1392,7 @@ begin
   Result.Root.AddItem('TV-set', TVTypeNames[TVType],
     procedure(Sender: TMenuItem)
     begin
-      TVType := (TVType + 1) mod 3;
+      SwitchTVType;
       Sender.Value := TVTypeNames[TVType];
     end);
 
@@ -1677,7 +1697,7 @@ begin
 
   if IsKeyPressed(KEY_F11) then
   begin
-    TVType := (TVType + 1) mod Length(Shaders);
+    SwitchTVType;
     SetOSD($'TV-set: {TVTypeNames[TVType]}');
   end;
 
@@ -1857,7 +1877,7 @@ begin
     Config.WriteInteger('Window', 'Height', GetScreenHeight);
   end;
 
-  Config.WriteInteger('Display', 'TVType', TVType);
+  Config.WriteInteger('Display', 'TVType', Ord(TVType));
   Config.WriteInteger('Display', 'Overscan', Overscan);
   Config.WriteBool('Display', 'Aspect', Aspect);
   Config.WriteFloat('Display', 'Curvature', Curvature);
