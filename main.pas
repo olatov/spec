@@ -129,9 +129,9 @@ type
     property TVType: TTVType read FTVType write SetTVType;
     property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
-      down in real time, so it is filled in lazily: whenever the colour is
+      down in real time, so it is filled in lazily: whenever the color is
       about to change (and once at the end of the frame) everything the beam
-      has covered since the last catch-up is painted in the outgoing colour. }
+      has covered since the last catch-up is painted in the outgoing color. }
     procedure PaintBorderUntil(AT: Integer);
     procedure RunFrame;
     property Muted: Boolean read FMuted write SetMuted;
@@ -191,7 +191,7 @@ const
   INPUT_KEY_UP = 1;
   INPUT_KEY_DOWN = 2;
   TVTypeNames: array[Low(TTVType)..High(TTvType)] of String = (
-    'Colour CRT', 'B/W CRT', 'Modern (smooth)', 'Modern (sharp)',
+    'Color CRT', 'B/W CRT', 'Modern (smooth)', 'Modern (sharp)',
     'Modern (scaleFX)');
 
   { What the file browser offers and LoadFile knows how to open. Anything else
@@ -993,7 +993,7 @@ begin
 end;
 
 procedure TApplication.Initialize;
-  { Resolves every attribute byte into its ink/paper colour pair, for both FLASH
+  { Resolves every attribute byte into its ink/paper color pair, for both FLASH
     phases. Must be rerun if Palette changes. }
   procedure BuildAttrColors;
   var
@@ -1784,7 +1784,7 @@ begin
     Machine.RunScanline;
   end;
 
-  { Nothing changed the colour after the last OUT - carry it to the bottom. }
+  { Nothing changed the color after the last OUT - carry it to the bottom. }
   PaintBorderUntil(TStatesPerFrame);
 end;
 
@@ -1900,7 +1900,7 @@ begin
 end;
 
 { Paints every border pixel the beam has swept between BorderT and AT in the
-  colour currently on the port, then parks the cursor at AT. Frame T-states map
+  color currently on the port, then parks the cursor at AT. Frame T-states map
   onto the raster linearly at two pixel slots per T-state, so the run is walked
   a row at a time, clipping each row to the visible image and stepping around
   the display window. }
@@ -1949,7 +1949,7 @@ end;
 
 procedure TApplication.OnBorderChange(AIndex: TZXColorIndex; ACycles: Integer);
 begin
-  { Fired before the machine adopts AIndex, so the colour still on the port is
+  { Fired before the machine adopts AIndex, so the color still on the port is
     the one the beam has been laying down up to this instant. }
   PaintBorderUntil(ACycles);
 end;
