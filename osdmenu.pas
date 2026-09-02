@@ -761,7 +761,10 @@ begin
   DrawRectangle(0, 480 - 48, 640, 36, DARKBLUE);
   DrawTextEx(Font, PChar(FCurrent.Footer), [MenuLeft, 440], 20, 0, YELLOW);
 
-  DrawTextEx(Font, PChar(Copyright), [436, 438], 24, 0, YELLOW);
+  DrawTextEx(Font,
+    PChar(Copyright),
+    [620 - MeasureText(PChar(Copyright), 24), 438],
+    24, 0, YELLOW);
 
   EndTextureMode;
 end;
