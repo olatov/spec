@@ -462,6 +462,8 @@ begin
   Joysticks.Add(TKempstonJoystick.Create);
   Joysticks.Add(TCursorJoystick.Create);
   Joysticks.Add(TSpanishJoystick.Create);
+  Joysticks.Add(TSinclairJoystick.Create(1));
+  Joysticks.Add(TSinclairJoystick.Create(2));
 
   Reset;
 end;
@@ -1076,16 +1078,7 @@ end;
 
 function TZXSpectrum48.GetJoystickName: String;
 begin
-  if not Assigned(Joystick) then
-    Result := 'None'
-  else if Joystick is TKempstonJoystick then
-    Result := 'Kempston'
-  else if Joystick is TCursorJoystick then
-    Result := 'Cursor'
-  else if Joystick is TSpanishJoystick then
-    Result := 'Spanish (QAOPM)'
-  else
-    Result := '?'; { Should not happen }
+  Result := if Assigned(Joystick) then Joystick.Name else 'None';
 end;
 
 procedure TZXSpectrum48.RecordMicEdge;

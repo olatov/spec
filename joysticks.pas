@@ -26,9 +26,11 @@ type
     function GetFire2: Boolean;
     function GetKeys: TArray<TKeyboardKey>;
     function GetLeft: Boolean;
+    function GetName: String; virtual;
     function GetRight: Boolean;
     function GetUp: Boolean;
   public
+    property Name: String read GetName;
     class var KeyBindings: TJoystickKeyBindings;
     class var GamepadBindings: TJoystickGamepadBindings;
     class var GamepadIndex: TNullable<Integer>;
@@ -53,15 +55,32 @@ type
   TKeySimulatorJoystick = class(TJoystick);
 
   TKempstonJoystick = class(TJoystick)
+    function GetName: String; override;
     function Poll(APort: Word): Byte; override;
   end;
 
   TCursorJoystick = class(TKeySimulatorJoystick)
+    function GetName: String; override;
     function Poll(APort: Word): Byte; override;
   end;
 
   TSpanishJoystick = class(TKeySimulatorJoystick)
     { OPQAM }
+    function GetName: String; override;
+    function Poll(APort: Word): Byte; override;
+  end;
+
+  TSinclairJoystick = class(TKeySimulatorJoystick)
+  { 12345 / 67890 }
+  public
+    type
+      TSinclairJoystickIndex = 1..2;
+  private
+    FIndex: TSinclairJoystickIndex;
+  public
+    property Index: TSinclairJoystickIndex read FIndex;
+    constructor Create(AIndex: TSinclairJoystickIndex); reintroduce;
+    function GetName: String; override;
     function Poll(APort: Word): Byte; override;
   end;
 
@@ -147,6 +166,11 @@ begin
   Result := IsDown(jcLeft);
 end;
 
+function TJoystick.GetName: String;
+begin
+
+end;
+
 function TJoystick.GetRight: Boolean;
 begin
   Result := IsDown(jcRight);
@@ -155,6 +179,11 @@ end;
 function TJoystick.GetUp: Boolean;
 begin
   Result := IsDown(jcUp);
+end;
+
+function TKempstonJoystick.GetName: String;
+begin
+  Result := 'Kempston';
 end;
 
 function TKempstonJoystick.Poll(APort: Word): Byte;
@@ -167,6 +196,11 @@ begin
   Result.Bits[3] := Up;
   Result.Bits[4] := Fire1;
   Result.Bits[5] := Fire2;
+end;
+
+function TCursorJoystick.GetName: String;
+begin
+  Result := 'Cursor / Protek';
 end;
 
 function TCursorJoystick.Poll(APort: Word): Byte;
@@ -187,6 +221,11 @@ begin
     Result.Bits[4] := Result.Bits[4] or Left;
 
   Result := not Result;
+end;
+
+function TSpanishJoystick.GetName: String;
+begin
+  Result := 'Spanish / QAOPM';
 end;
 
 function TSpanishJoystick.Poll(APort: Word): Byte;
@@ -213,6 +252,47 @@ begin
   begin
     Result.Bits[0] := Result.Bits[0] or Fire2; { Space }
     Result.Bits[2] := Result.Bits[2] or Fire1; { M }
+  end;
+
+  Result := not Result;
+end;
+
+constructor TSinclairJoystick.Create(AIndex: TSinclairJoystickIndex);
+begin
+  FIndex := AIndex;
+end;
+
+function TSinclairJoystick.GetName: String;
+begin
+  Result := $'Sinclair ({Index})';
+end;
+
+function TSinclairJoystick.Poll(APort: Word): Byte;
+begin
+  Result := inherited Poll(APort);
+
+  case Index of
+    1:
+      { $F7FE }
+      if not APort.Bits[11] then
+      begin
+        Result.Bits[0] := Result.Bits[0] or Left;
+        Result.Bits[1] := Result.Bits[1] or Right;
+        Result.Bits[2] := Result.Bits[2] or Down;
+        Result.Bits[3] := Result.Bits[3] or Up;
+        Result.Bits[4] := Result.Bits[4] or Fire1;
+      end;
+
+    2:
+      { $EFFE }
+      if not APort.Bits[12] then
+      begin
+        Result.Bits[0] := Fire1;
+        Result.Bits[1] := Up;
+        Result.Bits[2] := Down;
+        Result.Bits[3] := Right;
+        Result.Bits[4] := Left;
+      end;
   end;
 
   Result := not Result;
