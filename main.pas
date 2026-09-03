@@ -1173,6 +1173,7 @@ var
   Files: TFilePathList;
   Filename, ErrorMessage: String;
   Scale, PixelAspect: Single;
+  UseShader: Boolean;
   {$ifdef DEBUG_AUDIO}
     Started, EmuDone, BlitDone: Double;
     Idle: Boolean;
@@ -1235,8 +1236,12 @@ begin
     BlitDone := GetTime;
   {$endif}
 
+  UseShader := IsShaderValid(Shaders[TVType]);
+
+    if UseShader then
   BeginDrawing;
     ClearBackground(BLACK);
+    if UseShader then
     BeginShaderMode(Shaders[TVType]);
 
     if Aspect then
@@ -1261,6 +1266,8 @@ begin
         - Target.texture.height + (2 * Overscan)),
       Dest,
       Vector2Zero, 0, WHITE);
+
+    if UseShader then
     EndShaderMode;
 
     if Assigned(Menu) then
