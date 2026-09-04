@@ -310,7 +310,7 @@ end;
 
 procedure StatsInit;
 begin
-  if not Settings.Audio.Debug then Exit;
+  if not Settings.Audio.Stats then Exit;
 
   Stats.Start := GetTime;
   Stats.MarkTime := Stats.Start;
@@ -320,15 +320,14 @@ begin
 
   AttachAudioMixedProcessor(@AudioStatsProbe);
 
-  Writeln($'[audio] {AudioFrequency} Hz, chunk {AudioChunkFrames} frames ' +
+  TraceLog(LOG_DEBUG, PChar($'[audio] {AudioFrequency} Hz, chunk {AudioChunkFrames} frames ' +
     $'({AudioChunkFrames * 1000 / AudioFrequency:%.1f} ms), target {FPS} fps ' +
-    $'({SamplesPerFrame} frames/video frame)');
-  Flush(Output);
+    $'({SamplesPerFrame} frames/video frame)'));
 end;
 
 procedure StatsShutdown;
 begin
-  if not Settings.Audio.Debug then Exit;
+  if not Settings.Audio.Stats then Exit;
   DetachAudioMixedProcessor(@AudioStatsProbe);
 end;
 
@@ -337,7 +336,7 @@ procedure StatsChunk(AAccepted, AStarved: Boolean; AUpdateMilliseconds: Double);
 var
   Now, Gap: Double;
 begin
-  if not Settings.Audio.Debug then Exit;
+  if not Settings.Audio.Stats then Exit;
 
   Now := GetTime;
   if Stats.LastPush > 0 then
@@ -388,28 +387,28 @@ begin
   GenerateX := GenerateHz / AudioFrequency;
   ConsumeX := ConsumeHz / Device;
 
-  Writeln($'[audio {Now - Stats.Start:%7.1f}s] chunks {Pushed} pushed, ' +
+  TraceLog(LOG_DEBUG, PChar($'[audio {Now - Stats.Start:%7.1f}s] chunks {Pushed} pushed, ' +
     $'{Dropped} dropped ({Stats.ChunksDropped} total), ' +
     $'{Starved} starved ({Stats.ChunksStarved} total)   ' +
     $'gap ms {Stats.GapMin:%.2f}/{MeanGap:%.2f}/{Stats.GapPeak:%.2f}   ' +
-    $'UpdateAudioStream peak {Stats.UpdatePeak:%.2f} ms');
+    $'UpdateAudioStream peak {Stats.UpdatePeak:%.2f} ms'));
 
-  Writeln($'                  rate generate {GenerateHz:%9.1f} Hz ({GenerateX:%.6f}x)   ' +
+  TraceLog(LOG_DEBUG, PChar($'                  rate generate {GenerateHz:%9.1f} Hz ({GenerateX:%.6f}x)   ' +
     $'consume {ConsumeHz:%9.1f} Hz ({ConsumeX:%.6f}x of {Device})   ' +
-    $'drift {(GenerateX - ConsumeX) * 1000000:%.0f} ppm');
+    $'drift {(GenerateX - ConsumeX) * 1000000:%.0f} ppm'));
 
-  Writeln($'                  device block {Stats.BlockMin}..{Stats.BlockPeak} frames, ' +
-    $'callback gap peak {Stats.CallbackGapPeak * 1000:%.2f} ms');
+  TraceLog(LOG_DEBUG, PChar($'                  device block {Stats.BlockMin}..{Stats.BlockPeak} frames, ' +
+    $'callback gap peak {Stats.CallbackGapPeak * 1000:%.2f} ms'));
 
-  Writeln($'                  frame ms period {StatsMean(Stats.Period):%.2f}/{Stats.Period.Peak:%.2f}   ' +
+  TraceLog(LOG_DEBUG, PChar($'                  frame ms period {StatsMean(Stats.Period):%.2f}/{Stats.Period.Peak:%.2f}   ' +
     $'emu {StatsMean(Stats.Emu):%.2f}/{Stats.Emu.Peak:%.2f}   ' +
     $'blit {StatsMean(Stats.Blit):%.2f}/{Stats.Blit.Peak:%.2f}   ' +
     $'present {StatsMean(Stats.Present):%.2f}/{Stats.Present.Peak:%.2f}   ' +
-    $'({Stats.Frames} frames, {Stats.IdleFrames} idle)');
+    $'({Stats.Frames} frames, {Stats.IdleFrames} idle)'));
 
   if Stats.IdleFrames > 0 then
-    Writeln('                  (idle frames were paused or muted - no audio was ' +
-      'generated in them, so the rates above understate generation)');
+    TraceLog(LOG_DEBUG, PChar('                  (idle frames were paused or muted - no audio was ' +
+      'generated in them, so the rates above understate generation)'));
 
   Flush(Output);
 
@@ -445,7 +444,7 @@ end;
   way is "period", the wall time between the starts of consecutive frames. }
 procedure StatsFrame(AStart, AEmuDone, ABlitDone, AFrameDone: Double; AIdle: Boolean);
 begin
-  if not Settings.Audio.Debug then Exit;
+  if not Settings.Audio.Stats then Exit;
 
   Inc(Stats.Frames);
   if AIdle then Inc(Stats.IdleFrames);
@@ -954,7 +953,7 @@ begin
 
   FreeAndNil(Machine);
 
-  if Settings.Audio.Debug then StatsShutdown;
+  if Settings.Audio.Stats then StatsShutdown;
   if IsAudioStreamValid(AudioStream) then UnloadAudioStream(AudioStream);
   if IsAudioDeviceReady then CloseAudioDevice;
 
@@ -1118,7 +1117,7 @@ begin
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
   SetVolume(Settings.Audio.Volume);
 
-  if Settings.Audio.Debug then StatsInit;
+  if Settings.Audio.Stats then StatsInit;
 end;
 
 function TApplication.LoadFont: TFont;
@@ -1154,10 +1153,8 @@ var
   Filename, ErrorMessage: String;
   Scale, PixelAspect: Single;
   UseShader: Boolean;
-  {$ifdef DEBUG_AUDIO}
-    Started, EmuDone, BlitDone: Double;
-    Idle: Boolean;
-  {$endif}
+  Started, EmuDone, BlitDone: Double;
+  Idle: Boolean;
 begin
   if IsFileDropped then
   begin
@@ -1180,10 +1177,11 @@ begin
     FQuitTimer.Enabled := FQuitTimer.Countdown > 0;
   end;
 
-  {$ifdef DEBUG_AUDIO}
+  if Settings.Audio.Stats then
+  begin
     Started := GetTime;
     Idle := Paused or Muted;
-  {$endif}
+  end;
 
   HandleInput;
 
@@ -1199,9 +1197,7 @@ begin
     end;
   end;
 
-  {$ifdef DEBUG_AUDIO}
-    EmuDone := GetTime;
-  {$endif}
+  if Settings.Audio.Stats then EmuDone := GetTime;
 
   UpdateTexture(Video, Image.data);
 
@@ -1212,9 +1208,7 @@ begin
       Vector2Zero, 0, WHITE);
   EndTextureMode;
 
-  {$ifdef DEBUG_AUDIO}
-    BlitDone := GetTime;
-  {$endif}
+  if Settings.Audio.Stats then BlitDone := GetTime;
 
   UseShader := IsShaderValid(Shaders[TTVType(Settings.Display.TVType)]);
 
@@ -1295,9 +1289,8 @@ begin
     if Settings.Display.ShowFPS then DrawFPS(GetScreenWidth - 96, 16);
   EndDrawing;
 
-  {$ifdef DEBUG_AUDIO}
+  if Settings.Audio.Stats then
     StatsFrame(Started, EmuDone, BlitDone, GetTime, Idle);
-  {$endif}
 end;
 
 function TApplication.BuildMenu: TMenu;
@@ -1820,9 +1813,7 @@ end;
 procedure TApplication.RenderAudioFrame;
 var
   Accepted, Starved: Boolean;
-  {$ifdef DEBUG_AUDIO}
-    Started, Updated: Double;
-  {$endif}
+  Started, Updated: Double;
 begin
   AdvanceAudio(TStatesPerFrame);
   PrevTiming := 0;
@@ -1835,20 +1826,18 @@ begin
   Inc(AccumPos, SamplesPerFrame);
   if AccumPos >= AudioChunkFrames then
   begin
-    {$ifdef DEBUG_AUDIO}
+    if Settings.Audio.Stats then
       { A chunk the stream is too busy to take is dropped on the floor, silently
         losing AudioChunkFrames' worth of audio - the instrumentation counts
         those, since each one is a discontinuity the speaker reproduces as a
         click. Timing the handoff itself catches the other case, where the call
         blocks behind the device thread. }
       Started := GetTime;
-      {$endif}
+
     Accepted := IsAudioStreamProcessed(AudioStream);
     if Accepted then
       UpdateAudioStream(AudioStream, @AccumBuf, AudioChunkFrames);
-    {$ifdef DEBUG_AUDIO}
-      Updated := GetTime;
-    {$endif}
+    if Settings.Audio.Stats then Updated := GetTime;
 
     { The stream holds two sub-buffers. One having just been filled, a stream
       that still reports a processed sub-buffer has the other one free as well
@@ -1864,9 +1853,8 @@ begin
     AccumPos := 0;
     if Starved then PrimeAudio;
 
-    {$ifdef DEBUG_AUDIO}
+    if Settings.Audio.Stats then
       StatsChunk(Accepted, Starved, (Updated - Started) * 1000);
-    {$endif}
   end;
 end;
 

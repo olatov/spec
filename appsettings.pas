@@ -36,7 +36,7 @@ type
     Audio: record
       Volume: Single;
       Muted: Boolean;
-      Debug: Boolean;
+      Stats: Boolean;
     end;
     Keyboard: record
       CapsShiftKey, SymbolShiftKey, BreakSpaceKey: TKeyboardKey;
@@ -147,7 +147,7 @@ begin
   begin
     Muted := F.ReadBool('Audio', 'Muted', False);
     Volume := F.ReadFloat('Audio', 'Volume', 0.25);
-    Debug := F.ReadBool('Audio', 'Debug', False);
+    Stats := F.ReadBool('Audio', 'Stats', False);
   end;
 
   with Keyboard do
@@ -219,7 +219,7 @@ begin
   begin
     F.WriteBool('Audio', 'Muted', Muted);
     F.WriteFloat('Audio', 'Volume', Volume);
-    F.WriteBool('Audio', 'Debug', Debug);
+    F.WriteBool('Audio', 'Stats', Stats);
   end;
 
   with Keyboard do

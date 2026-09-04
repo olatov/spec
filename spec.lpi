@@ -50,13 +50,9 @@
             </Debugging>
           </Linking>
           <Other>
-            <CustomOptions Value="-FF
--dUSE_DELAY
--dDEBUG_AUDIO"/>
-            <OtherDefines Count="3">
-              <Define0 Value="USE_DELAY"/>
-              <Define1 Value="DEBUG_AUDIO"/>
-              <Define2 Value="EMBED_CATALOG"/>
+            <CustomOptions Value="-FF"/>
+            <OtherDefines Count="1">
+              <Define0 Value="EMBED_CATALOG"/>
             </OtherDefines>
           </Other>
         </CompilerOptions>
