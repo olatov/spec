@@ -90,7 +90,6 @@ type
       so tape loading and saving can be verified without a real keyboard or
       window focus. }
     AutoLoadFrame: Int64;
-    TapeSound: Boolean;   { [Tape] Sound - play tape noise through the speaker }
     Palette: array[0..15] of TColorB;
     AttrColors: array[0..1] of TAttrTable;
     Pixels: PPixels;
@@ -182,7 +181,7 @@ var
   PrevT: Integer = 0;        { T-state at which that accumulation last left off }
   BucketStartT: Integer = 0; { T-state at which the current bucket began }
   BucketHigh: Integer = 0;   { T-states spent HIGH within the current bucket so far }
-  BucketTapeHigh: Integer = 0; { same, for the tape signal (see TapeSound) }
+  BucketTapeHigh: Integer = 0; { same, for the tape signal (see Tape Sound) }
   AccumBuf: array[0..AudioChunkFrames - 1] of CInt16;
   AccumPos: Integer = 0;
   {$embedstr ShaderTVColor 'shaders/shader_color.fs'}
@@ -870,7 +869,7 @@ var
   NextBoundary, Duration, High: Integer;
   Mixing: Boolean;
 begin
-  Mixing := TapeSound and (Machine.TapePlaying or Machine.Saving);
+  Mixing := Settings.Tape.Sound and (Machine.TapePlaying or Machine.Saving);
 
   while PrevTiming < SamplesPerFrame do
   begin
@@ -1011,6 +1010,8 @@ var
 begin
   inherited Destroy;
 
+  Settings.Tape.Save := Machine.SaveToWav;
+
   with Settings.Joystick do
   begin
     LeftKey := Machine.Joystick.KeyBindings[jcLeft];
@@ -1038,8 +1039,11 @@ begin
 
   if IsTextureValid(KeyboardTexture) then UnloadTexture(KeyboardTexture);
 
-  Settings.Window.Width := Max(GetScreenWidth, 352);
-  Settings.Window.Height := Max(GetScreenHeight, 288);
+  if not Settings.Window.Fullscreen then
+  begin
+    Settings.Window.Width := Max(GetScreenWidth, 352);
+    Settings.Window.Height := Max(GetScreenHeight, 288);
+  end;
 
   if IsWindowReady then CloseWindow;
 end;
@@ -1170,6 +1174,8 @@ begin
   SetAudioStreamBufferSizeDefault(AudioChunkFrames);
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
   SetVolume(Settings.Audio.Volume);
+
+  Machine.SaveToWav := Settings.Tape.Save;
 
   if Settings.Audio.Stats then StatsInit;
 end;

@@ -1158,7 +1158,7 @@ var
     if AUpTo > Total then AUpTo := Total;
     if AUpTo > Idx then
     begin
-      FillByte(Data[Idx], AUpTo - Idx, if Level then 255 else 0);
+      FillByte(Data[Idx], AUpTo - Idx, 127 + IfThen(Level, 32, -32));
       Idx := AUpTo;
     end;
   end;
