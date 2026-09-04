@@ -147,6 +147,10 @@
         <Filename Value="catalogs.pas"/>
         <UnitName Value="Catalogs"/>
       </Unit>
+      <Unit>
+        <Filename Value="appsettings.pas"/>
+        <UnitName Value="nit"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

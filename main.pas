@@ -24,7 +24,6 @@ unit main;
     that overshoots is made up by the next one rather than by every one after
     it, and NanoSleep replaces the frame limiter.
   }
-  {$define USE_DELAY}
 {$endif}
 
 interface
@@ -33,8 +32,8 @@ uses
   {$ifdef mswindows} Windows, {$endif}
   Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
   Raylib, RayMath,
-  {$ifdef USE_DELAY} Utils, {$endif}
-  Z80, Spectrum, OSDMenu, Keyboards, Joysticks, Catalogs;
+  Utils,
+  Z80, Spectrum, OSDMenu, Keyboards, Joysticks, Catalogs, AppSettings;
 
 type
   TSimpleTimer = record
@@ -44,17 +43,14 @@ type
 
   TTVType = (tvColor = 0, tvBW, tvModernSmooth, tvModernSharp, tvModernScaleFX);
 
+  TDelayDriver = (ddNone = 0, ddDefault = 1, ddRaylib = 2, ddSDL3 = 3);
+
   TApplication = class(TComponent)
   private
     function GetQuickSaveFilename: String;
   private
-    FFullscreen: Boolean;
-    Config: TIniFile;
-    FMuted: Boolean;
-    FTapeAutoLoad: Boolean;
     FCatalogPage: TCatalogMenuItem;   { valid only while Menu is - see BuildMenu }
     FQuitTimer: TSimpleTimer;
-    FTVType: TTVType;
     FAutoLoad: record
       Active: Boolean;
       Frame: Integer;
@@ -62,7 +58,8 @@ type
     { GetTime deadline for a one-shot re-prime of the audio stream after the
       device has warmed up, or 0 when none is pending. See Run. }
     FAudioWarmup: Double;
-    procedure SetTVType(AValue: TTVType);
+    function GetMuted: Boolean;
+    function GetTapeAutoLoad: Boolean;
     property QuickSaveFilename: String read GetQuickSaveFilename;
     procedure AdvanceAudio(NewT: Integer);
     function BuildMenu: TMenu;
@@ -74,7 +71,6 @@ type
       AError: String; AForceAutoLoad: Boolean = False): Boolean;
     procedure OpenMenu(ACatalog: Boolean = False);
     function GetPaused: Boolean;
-    procedure SetMuted(AValue: Boolean);
     procedure SetTapeAutoLoad(AValue: Boolean);
     procedure TapeSaved(const AFilename: String);
     function QuickLoad: Boolean;
@@ -89,7 +85,6 @@ type
     function EntriesOf(const APath: String; ADirectories: Boolean): TStringArray;
     procedure BrowseFiles(AItem: TFileMenuItem);
     function LoadFile(const AFilename: String; out AError: String): Boolean;
-    procedure SetFullscreen(AValue: Boolean);
     procedure SetVolume(AVolume: Single; K: Single = 4);
     procedure PrimeAudio;
     function AutoLoadAction(Frame: Int64): Boolean;
@@ -111,32 +106,28 @@ type
       so tape loading and saving can be verified without a real keyboard or
       window focus. }
     AutoLoadFrame: Int64;
-    SavePath: String;
-    BrowsePath: String;   { folder the Load browser last showed }
     Shaders: array[Low(TTVType)..High(TTvType)] of TShader;
     TapeSound: Boolean;   { [Tape] Sound - play tape noise through the speaker }
     Palette: array[0..15] of TColorB;
     AttrColors: array[0..1] of TAttrTable;
     Pixels: PPixels;
     AttrTable: PAttrTable;
-    Overscan: Integer;
     QuitRequested: Boolean;
     BorderT: Integer;
     CurrentFile: String;
-    Aspect: Boolean;
-    Curvature: Single;
     Turbo: Boolean;
-    property TVType: TTVType read FTVType write SetTVType;
-    property TapeAutoLoad: Boolean read FTapeAutoLoad write SetTapeAutoLoad;
+    procedure SetFullscreen(AValue: Boolean);
+    procedure SetTVType(AValue: TTVType);
+    procedure SetMuted(AValue: Boolean);
+    property TapeAutoLoad: Boolean read GetTapeAutoLoad write SetTapeAutoLoad;
     { Frame T-state the border has been painted up to. The ULA lays the border
       down in real time, so it is filled in lazily: whenever the color is
       about to change (and once at the end of the frame) everything the beam
       has covered since the last catch-up is painted in the outgoing color. }
     procedure PaintBorderUntil(AT: Integer);
     procedure RunFrame;
-    property Muted: Boolean read FMuted write SetMuted;
+    property Muted: Boolean read GetMuted write SetMuted;
     property Paused: Boolean read GetPaused;
-    property Fullscreen: Boolean read FFullscreen write SetFullscreen;
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure Initialize;
@@ -144,7 +135,6 @@ type
     procedure HandleInput;
     procedure RenderVideoFrame;
     procedure RenderAudioFrame;
-    procedure SaveConfig;
     procedure OnBorderChange(AIndex: TZXColorIndex; ACycles: Integer);
   end;
 
@@ -503,11 +493,10 @@ end;
 
 procedure TApplication.SetFullscreen(AValue: Boolean);
 begin
-  if FFullscreen = AValue then Exit;
-  FFullscreen := AValue;
+  Settings.Window.Fullscreen := AValue;
 
-  ToggleBorderlessWindowed;
-  if FFullscreen then
+  if AValue <> IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE) then ToggleBorderlessWindowed;
+  if Settings.Window.Fullscreen then
     HideCursor
   else
     ShowCursor;
@@ -530,7 +519,9 @@ end;
   emulator", i.e. wherever it was started from. }
 function TApplication.SaveDir: String;
 begin
-  Result := if SavePath.IsEmpty then GetCurrentDir else SavePath;
+  Result := if Settings.Files.SavePath.IsEmpty
+    then GetCurrentDir
+    else Settings.Files.SavePath;
 end;
 
 { Bare names of the snapshots already in SaveDir, sorted. }
@@ -698,7 +689,7 @@ begin
         Sender.Parent.Warning := $'{TPath.GetFileName(Sender.Data)}: {Error}';
     end;
 
-  BrowsePath := AItem.Path;   { where the browser reopens next time }
+  Settings.Files.BrowsePath := AItem.Path;   { where the browser reopens next time }
 
   Parent := TPath.GetDirectoryName(ExcludeTrailingPathDelimiter(AItem.Path));
   if not Parent.IsEmpty and (Parent <> AItem.Path) then
@@ -809,15 +800,25 @@ begin
     then 'spec'
     else TPath.GetFileNameWithoutExtension(CurrentFile);
 
-  Result := TPath.Combine(SavePath, Result + '_quicksave.z80');
+  Result := TPath.Combine(Settings.Files.SavePath, Result + '_quicksave.z80');
+end;
+
+function TApplication.GetTapeAutoLoad: Boolean;
+begin
+  Result := Settings.Tape.AutoLoad;
+end;
+
+function TApplication.GetMuted: Boolean;
+begin
+  Result := Settings.Audio.Muted;
 end;
 
 procedure TApplication.SetTVType(AValue: TTVType);
 begin
-  FTVType := AValue;
+  Settings.Display.TVType := Ord(AValue);
   SetTextureFilter(
     Target.texture,
-    if TVType in [tvModernSharp{, tvModernScaleFX}]
+    if AValue in [tvModernSharp{, tvModernScaleFX}]
       then TEXTURE_FILTER_POINT
       else TEXTURE_FILTER_BILINEAR);
 end;
@@ -902,8 +903,12 @@ begin
 end;
 
 procedure TApplication.SwitchTVType;
+var
+  TVType: TTVType;
 begin
+  TVType := TTVType(Settings.Display.TVType);
   TVType := if TVType < High(TTVType) then Succ(TVType) else Low(TTVType);
+  Settings.Display.TVType := Ord(TVType);
 end;
 
 procedure SetOSD(AText: String; ADuration: Double = 2);
@@ -952,13 +957,12 @@ constructor TApplication.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
 
-  SetTraceLogLevel(LOG_ERROR);
+  //SetTraceLogLevel(LOG_ERROR);
 
   if not LoadLib80 then
     raise Exception.Create('Fatal: unable to load Z80 library');
 
   Machine := TZXSpectrum48.Create;
-  Config := TIniFile.Create(GetAppConfigFile(False));
 end;
 
 destructor TApplication.Destroy;
@@ -967,8 +971,15 @@ var
 begin
   inherited Destroy;
 
-  if Assigned(Config) then SaveConfig;
-  FreeAndNil(Config);
+  with Settings.Joystick do
+  begin
+    LeftKey := Machine.Joystick.KeyBindings[jcLeft];
+    RightKey := Machine.Joystick.KeyBindings[jcRight];
+    UpKey := Machine.Joystick.KeyBindings[jcUp];
+    DownKey := Machine.Joystick.KeyBindings[jcDown];
+    Fire1Key := Machine.Joystick.KeyBindings[jcFire1];
+    Fire2Key := Machine.Joystick.KeyBindings[jcFire2];
+  end;
 
   FreeAndNil(Machine);
 
@@ -1017,7 +1028,6 @@ procedure TApplication.Initialize;
 var
   I: Integer;
   T: TTVType;
-  Control: TJoystickControl;
   LinesCount: Single = 256;
 begin
   Palette := [
@@ -1045,47 +1055,44 @@ begin
   Machine.AdvanceAudio := @AdvanceAudio;
   Machine.BorderChange := @OnBorderChange;
 
-  if Config.ReadBool('Window', 'HiDPI', False) then
-    SetConfigFlags(FLAG_WINDOW_HIGHDPI);
+  if Settings.Window.HiDPI then SetConfigFlags(FLAG_WINDOW_HIGHDPI);
 
-  InitWindow(
-    Config.ReadInteger('Window', 'Width', 800),
-    Config.ReadInteger('Window', 'Height', 600),
-    'Spec');
+  { On the native DRM platform (Raspberry Pi with no X/Wayland) there is no
+    windowing system to take a vsync-off hint away from - rcore_drm.c never
+    calls eglSwapInterval, so ClearWindowState(FLAG_VSYNC_HINT) below is a
+    no-op there and every page flip waits for the connector's real vblank.
+    Worse, InitWindow's DRM backend picks its connector mode by asking for
+    CORE.Time.target's fps (falling back to 60 if it is still unset) - so if
+    SetTargetFPS runs after InitWindow, as it would below, the mode search
+    already ran against a 60 Hz target and a 60 Hz mode gets locked in even
+    when the display has a 50 Hz mode at the same resolution. That mismatch
+    beats a hard 60 Hz vblank against this 50 Hz emulator's frame clock: some
+    frames take one flip, some take two, RunFrame's single video-frame's
+    worth of audio comes out at whatever that ends up averaging to rather
+    than 44100 Hz, and the stream underruns on the difference. So set the
+    target before InitWindow on every platform - SetTargetFPS only ever
+    touches CORE.Time.target and is safe to call this early - and DRM's mode
+    search then has a chance to match the emulator's own rate. }
 
-  {$ifndef USE_DELAY}
-    SetTargetFPS(FPS)
-  {$endif};
+  if TDelayDriver(Settings.System.DelayDriver) = ddRaylib then SetTargetFPS(FPS);
+
+  InitWindow(Settings.Window.Width, Settings.Window.Height, 'Spec');
+
   SetWindowState(FLAG_WINDOW_RESIZABLE);
   ClearWindowState(FLAG_VSYNC_HINT);
 
-  Fullscreen := Config.ReadBool('Window', 'Fullscreen', True);
+  SetFullscreen(Settings.Window.Fullscreen);
 
   Font := Self.LoadFont;
 
-  Overscan := Config.ReadInteger('Display', 'Overscan', 16);
-  Aspect := Config.ReadBool('Display', 'Aspect', True);
-  Curvature := Config.ReadFloat('Display', 'Curvature', 7.0);
-  TapeSound := Config.ReadBool('Tape', 'Sound', True);
-  Machine.SaveToWav := Config.ReadBool('Tape', 'Save', True);
   Machine.OnTapeSaved := @TapeSaved;
 
-  Machine.Keyboard.CapsShiftKeys := [
-    Config.ReadInteger('Keyboard', 'CapsShift', KEY_LEFT_SHIFT)];
-  Machine.Keyboard.SymbolShiftKeys := [
-    Config.ReadInteger('Keyboard', 'SymbolShiftKey',
-      {$ifdef darwin} KEY_RIGHT_ALT {$else} KEY_RIGHT_CONTROL {$endif})];
-  Machine.Keyboard.BreakSpaceKeys := [
-    Config.ReadInteger('Keyboard', 'CapsShift', KEY_SPACE)];
+  Machine.Keyboard.CapsShiftKeys := [Settings.Keyboard.CapsShiftKey];
+  Machine.Keyboard.SymbolShiftKeys := [Settings.Keyboard.SymbolShiftKey];
+  Machine.Keyboard.BreakSpaceKeys := [Settings.Keyboard.BreakSpaceKey];
   Machine.Keyboard.BuildKeyRects;
 
-  TapeAutoLoad := Config.ReadBool('Tape', 'AutoLoad', True)
-    or not GetEnvironmentVariable('SPEC_AUTOLOAD').IsEmpty;
-
-  SavePath := Config.ReadString('Files', 'SavePath', '');
-  BrowsePath := SaveDir;
-
-  Machine.JoystickIndex := Config.ReadInteger('Joystick', 'Index', 1);
+  Machine.JoystickIndex := Settings.Joystick.Index;
   if Machine.JoystickIndex >= Machine.Joysticks.Count then
     Machine.JoystickIndex := 0;
 
@@ -1096,17 +1103,17 @@ begin
       Break;
     end;
 
-  { Each binding falls back to the built-in one, written out the same way the
-    config would have it, so an unreadable or absent setting costs that one
-    control rather than the lot. }
-  for Control := Low(TJoystickControl) to High(TJoystickControl) do
-    TJoystick.KeyBindings[Control] := TKeyboard.KeyFromId(
-      Config.ReadString('Joystick', JoystickControlNames[Control],
-        TKeyboard.KeyId[TJoystick.KeyBindings[Control]]));
+  with TJoystick do
+  begin
+    KeyBindings[jcLeft] := Settings.Joystick.LeftKey;
+    KeyBindings[jcRight] := Settings.Joystick.RightKey;
+    KeyBindings[jcUp] := Settings.Joystick.UpKey;
+    KeyBindings[jcDown] := Settings.Joystick.DownKey;
+    KeyBindings[jcFire1] := Settings.Joystick.Fire1Key;
+    KeyBindings[jcFire2] := Settings.Joystick.Fire2Key;
+  end;
 
   Target := LoadRenderTexture(352, 288);
-  TVType := TTvType(Config.ReadInteger('Display', 'TVType', Ord(tvColor))
-    mod (Ord(High(TTvType)) + 1));
 
   Shaders[tvColor] := LoadShaderFromMemory(Nil, @ShaderTextColor[1]);
   Shaders[tvBW] := LoadShaderFromMemory(Nil, @ShaderTextBW[1]);
@@ -1120,8 +1127,10 @@ begin
     SetShaderValue(Shaders[T],
       GetShaderLocation(Shaders[T], 'lines'), @LinesCount, SHADER_UNIFORM_FLOAT);
     SetShaderValue(Shaders[T],
-      GetShaderLocation(Shaders[T], 'curvature'), @Curvature, SHADER_UNIFORM_FLOAT);
+      GetShaderLocation(Shaders[T], 'curvature'), @Settings.Display.Curvature, SHADER_UNIFORM_FLOAT);
   end;
+
+  SetTVType(TTVType(Settings.Display.TVType));
 
   KeyboardTexture := LoadKeyboardTexture;
 
@@ -1133,8 +1142,7 @@ begin
 
   SetAudioStreamBufferSizeDefault(AudioChunkFrames);
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
-  SetVolume(Config.ReadFloat('Audio', 'Volume', 0.4));
-  Muted := Config.ReadBool('Audio', 'Muted', False);
+  SetVolume(Settings.Audio.Volume);
 
   {$ifdef DEBUG_AUDIO}
     StatsInit;
@@ -1236,15 +1244,14 @@ begin
     BlitDone := GetTime;
   {$endif}
 
-  UseShader := IsShaderValid(Shaders[TVType]);
+  UseShader := IsShaderValid(Shaders[TTVType(Settings.Display.TVType)]);
 
-    if UseShader then
   BeginDrawing;
     ClearBackground(BLACK);
     if UseShader then
-    BeginShaderMode(Shaders[TVType]);
+      BeginShaderMode(Shaders[TTVType(Settings.Display.TVType)]);
 
-    if Aspect then
+    if Settings.Display.Aspect then
       Dest := if (GetScreenWidth / GetScreenHeight) >= 1.333
         then RectangleCreate(0.5 * GetScreenWidth - (GetScreenHeight * 0.667), 0,
           GetScreenHeight * 1.333, GetScreenHeight)
@@ -1261,14 +1268,14 @@ begin
 
     DrawTexturePro(
       Target.Texture,
-      RectangleCreate(Overscan * PixelAspect, Overscan,
-        Target.texture.width - (2 * PixelAspect * Overscan),
-        - Target.texture.height + (2 * Overscan)),
+      RectangleCreate(Settings.Display.Overscan * PixelAspect, Settings.Display.Overscan,
+        Target.texture.width - (2 * PixelAspect * Settings.Display.Overscan),
+        - Target.texture.height + (2 * Settings.Display.Overscan)),
       Dest,
       Vector2Zero, 0, WHITE);
 
     if UseShader then
-    EndShaderMode;
+      EndShaderMode;
 
     if Assigned(Menu) then
     begin
@@ -1313,6 +1320,7 @@ begin
       end
       else
         OSD.Text := '';
+    if Settings.Display.ShowFPS then DrawFPS(GetScreenWidth - 96, 16);
   EndDrawing;
 
   {$ifdef DEBUG_AUDIO}
@@ -1360,7 +1368,7 @@ begin
             Sender.Parent.Warning := Error;
         end);
 
-  Result.Root.AddBrowser('Load', BrowsePath,
+  Result.Root.AddBrowser('Load', Settings.Files.BrowsePath,
     procedure(Sender: TFileMenuItem)
     begin
       BrowseFiles(Sender);
@@ -1396,25 +1404,25 @@ begin
 
   AddControlsPage(Result.Root);
 
-  Result.Root.AddItem('TV-set', TVTypeNames[TVType],
+  Result.Root.AddItem('TV-set', TVTypeNames[TTVType(Settings.Display.TVType)],
     procedure(Sender: TMenuItem)
     begin
       SwitchTVType;
-      Sender.Value := TVTypeNames[TVType];
+      Sender.Value := TVTypeNames[TTVType(Settings.Display.TVType)];
     end);
 
-  Result.Root.AddItem('Fullscreen', BoolToStr(Fullscreen, 'yes', 'no'),
+  Result.Root.AddItem('Fullscreen', BoolToStr(Settings.Window.Fullscreen, 'yes', 'no'),
     procedure(Sender: TMenuItem)
     begin
-      Fullscreen := not Fullscreen;
-      Sender.Value := BoolToStr(Fullscreen, 'yes', 'no');
+      SetFullscreen(not Settings.Window.Fullscreen);
+      Sender.Value := BoolToStr(Settings.Window.Fullscreen, 'yes', 'no');
     end);
 
-  Result.Root.AddItem('Aspect', BoolToStr(Aspect, '4:3', 'no'),
+  Result.Root.AddItem('Aspect', BoolToStr(Settings.Display.Aspect, '4:3', 'no'),
   procedure(Sender: TMenuItem)
   begin
-    Aspect := not Aspect;
-    Sender.Value := BoolToStr(Aspect, '4:3', 'no');
+    Settings.Display.Aspect := not Settings.Display.Aspect;
+    Sender.Value := BoolToStr(Settings.Display.Aspect, '4:3', 'no');
   end);
 
   Result.Root.AddItem('Sound', BoolToStr(not Muted, 'yes', '-'),
@@ -1521,10 +1529,9 @@ end;
 
 procedure TApplication.SetMuted(AValue: Boolean);
 begin
-  if FMuted = AValue then Exit;
-  FMuted := AValue;
+  Settings.Audio.Muted := AValue;
 
-  if Muted and IsAudioStreamPlaying(AudioStream) then
+  if AValue and IsAudioStreamPlaying(AudioStream) then
     StopAudioStream(AudioStream)
   else if IsAudioStreamValid(AudioStream) then
   begin
@@ -1538,11 +1545,10 @@ end;
 
 procedure TApplication.SetTapeAutoLoad(AValue: Boolean);
 begin
-  if FTapeAutoLoad = AValue then Exit;
-  FTapeAutoLoad := AValue;
+  Settings.Tape.AutoLoad := AValue;
 
   { give the ROM time (100 frames = 2 sec) to finish booting to BASIC first }
-  AutoLoadFrame := if FTapeAutoLoad then 100 else -1;
+  AutoLoadFrame := if AValue then 100 else -1;
 end;
 
 procedure TApplication.Run;
@@ -1638,7 +1644,7 @@ var
   Filename, FullFilename: String;
   I: Integer;
 begin
-  if IsKeyPressed(KEY_F10) then Fullscreen := not Fullscreen;
+  if IsKeyPressed(KEY_F10) then SetFullscreen(not Settings.Window.Fullscreen);
 
   if IsKeyPressed(KEY_SCROLL_LOCK) then
   begin
@@ -1693,8 +1699,8 @@ begin
   begin
     if IsKeyDown(KEY_LEFT_SHIFT) or IsKeyDown(KEY_LEFT_SHIFT) then
     begin
-      Overscan := Overscan + IfThen(IsKeyPressed(KEY_F7), -1, 1);
-      SetOSD($'Overscan: {Overscan}');
+      Settings.Display.Overscan := Settings.Display.Overscan + IfThen(IsKeyPressed(KEY_F7), -1, 1);
+      SetOSD($'Overscan: {Settings.Display.Overscan}');
     end else
     begin
       SetVolume(AudioVolume + IfThen(IsKeyPressed(KEY_F7), -0.05, 0.05));
@@ -1705,7 +1711,7 @@ begin
   if IsKeyPressed(KEY_F11) then
   begin
     SwitchTVType;
-    SetOSD($'TV-set: {TVTypeNames[TVType]}');
+    SetOSD($'TV-set: {TVTypeNames[TTVType(Settings.Display.TVType)]}');
   end;
 
   if IsKeyPressed(KEY_F6) then
@@ -1869,41 +1875,6 @@ begin
       StatsChunk(Accepted, Starved, (Updated - Started) * 1000);
     {$endif}
   end;
-end;
-
-procedure TApplication.SaveConfig;
-var
-  Control: TJoystickControl;
-begin
-  if not Assigned(Config) then Exit;
-
-  Config.WriteBool('Window', 'Fullscreen', Fullscreen);
-  if not Fullscreen then
-  begin
-    Config.WriteInteger('Window', 'Width', GetScreenWidth);
-    Config.WriteInteger('Window', 'Height', GetScreenHeight);
-  end;
-
-  Config.WriteInteger('Display', 'TVType', Ord(TVType));
-  Config.WriteInteger('Display', 'Overscan', Overscan);
-  Config.WriteBool('Display', 'Aspect', Aspect);
-  Config.WriteFloat('Display', 'Curvature', Curvature);
-
-  Config.WriteInteger('Keyboard', 'CapsShift', Machine.Keyboard.CapsShiftKey);
-  Config.WriteInteger('Keyboard', 'SymbolShiftKey', Machine.Keyboard.SymbolShiftKey);
-  Config.WriteInteger('Keyboard', 'BreakSpaceKey', Machine.Keyboard.BreakSpaceKey);
-
-  Config.WriteFloat('Audio', 'Volume', AudioVolume);
-  Config.WriteBool('Audio', 'Muted', Muted);
-  Config.WriteBool('Tape', 'AutoLoad', TapeAutoLoad);
-  Config.WriteBool('Tape', 'Sound', TapeSound);
-  Config.WriteBool('Tape', 'Save', Machine.SaveToWav);
-
-  Config.WriteInteger('Joystick', 'Index', Machine.JoystickIndex);
-
-  for Control := Low(TJoystickControl) to High(TJoystickControl) do
-    Config.WriteString('Joystick', JoystickControlNames[Control],
-      TKeyboard.KeyId[TJoystick.KeyBindings[Control]]);
 end;
 
 { Paints every border pixel the beam has swept between BorderT and AT in the
