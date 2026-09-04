@@ -27,7 +27,7 @@ type
       HiDPI: Boolean;
     end;
     Display: record
-      TVType: Integer;
+      TVMode: Integer;
       Overscan: Integer;
       Curvature: Single;
       Aspect: Boolean;
@@ -136,7 +136,7 @@ begin
 
   with Display do
   begin
-    TVType := F.ReadInteger('Display', 'TVType', 0);
+    TVMode := F.ReadInteger('Display', 'TVMode', 0);
     Overscan := F.ReadInteger('Display', 'Overscan', 16);
     Aspect := F.ReadBool('Display', 'Aspect', True);
     Curvature := F.ReadFloat('Display', 'Curvature', 8.0);
@@ -208,7 +208,7 @@ begin
 
   with Display do
   begin
-    F.WriteInteger('Display', 'TVType', TVType);
+    F.WriteInteger('Display', 'TVMode', TVMode);
     F.WriteInteger('Display', 'Overscan', Overscan);
     F.WriteBool('Display', 'Aspect', Aspect);
     F.WriteFloat('Display', 'Curvature', Curvature);
@@ -219,7 +219,7 @@ begin
   begin
     F.WriteBool('Audio', 'Muted', Muted);
     F.WriteFloat('Audio', 'Volume', Volume);
-    F.WriteBool('Audio', 'Stats', Stats);
+    F.WriteBool('Audio', 'Debug', Stats);
   end;
 
   with Keyboard do
