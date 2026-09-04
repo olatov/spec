@@ -179,7 +179,7 @@ begin
     Fire1Key := F.ReadInteger('Joystick', 'Fire1Key',
       {$ifdef darwin} KEY_LEFT_SUPER {$else} KEY_LEFT_ALT {$endif});
     Fire2Key := F.ReadInteger('Joystick', 'Fire2Key',
-      {$ifdef darwin} KEY_RIGHT_SUPER} {$else} KEY_RIGHT_ALT {$endif});
+      {$ifdef darwin} KEY_RIGHT_SUPER {$else} KEY_RIGHT_ALT {$endif});
   end;
 
   Gamepad.Name := F.ReadString('GamePad', 'Name', '');
