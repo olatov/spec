@@ -4,6 +4,7 @@
 *.ppu
 *.lps
 *.fpc
+*.conf
 *.exe
 *.a
 *.obj

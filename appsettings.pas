@@ -5,15 +5,21 @@ unit AppSettings;
 interface
 
 uses
-  Classes, SysUtils, IniFiles,
+  Classes, SysUtils, IniFiles, FGL,
   Raylib;
 
 type
+  TDelayDriver = (ddNone = 0, ddDefault, ddRaylib,
+    ddSDL3DelayNS, ddSDL3DelayPrecise, ddSleep, ddVSync);
+
   TAppSettings = class
+  private
+    FDelayDriverMap: TFPGMap<String, TDelayDriver>;
   public
     Filename: String;
     System: record
-      DelayDriver: Integer;
+      DelayDriver: TDelayDriver;
+      LogLevel: TTraceLogLevel;
     end;
     Window: record
       Width, Height: Integer;
@@ -50,7 +56,10 @@ type
     Gamepad: record
       Name: String;
     end;
+    function ParseDelayDriver(AValue: String): TDelayDriver;
+    function DelayDriverToString(AValue: TDelayDriver): String;
     constructor Create(AFilename: String);
+    destructor Destroy; override;
     procedure Load;
     procedure Save;
   end;
@@ -60,9 +69,48 @@ var
 
 implementation
 
+function TAppSettings.ParseDelayDriver(AValue: String): TDelayDriver;
+begin
+  if not FDelayDriverMap.TryGetData(AValue.ToUpper, Result) then
+    raise Exception.CreateFmt('Invalid DelayDriver value: "%s"', [AValue]);
+end;
+
+function TAppSettings.DelayDriverToString(AValue: TDelayDriver): String;
+var
+  I: Integer;
+begin
+  Result := '';
+
+  for I := 0 to FDelayDriverMap.Count - 1 do
+  begin
+    if FDelayDriverMap.Data[I] = AValue then Result := FDelayDriverMap.Keys[I];
+    if not Result.IsEmpty then Exit;
+  end;
+  Result := '?';
+end;
+
 constructor TAppSettings.Create(AFilename: String);
 begin
   Filename := AFilename;
+
+  FDelayDriverMap := TFPGMap<String, TDelayDriver>.Create;
+  with FDelayDriverMap do
+  begin
+    Add('', ddDefault);
+    Add('NONE', ddNone);
+    Add('DEFAULT', ddDefault);
+    Add('RAYLIB', ddRaylib);
+    Add('SDL3DELAYNS', ddSDL3DelayNS);
+    Add('SDL3DELAYPRECISE', ddSDL3DelayPrecise);
+    Add('SLEEP', ddSleep);
+    Add('VSYNC', ddVSync);
+  end;
+end;
+
+destructor TAppSettings.Destroy;
+begin
+  FreeAndNil(FDelayDriverMap);
+  inherited Destroy;
 end;
 
 procedure TAppSettings.Load;
@@ -72,7 +120,10 @@ begin
   F := autofree TIniFile.Create(Filename);
 
   with System do
-    DelayDriver := F.ReadInteger('System', 'DelayDriver', 1);
+  begin
+    DelayDriver := ParseDelayDriver(F.ReadString('System', 'DelayDriver', 'default'));
+    LogLevel := F.ReadInteger('System', 'LogLevel', LOG_ERROR);
+  end;
 
   with Window do
   begin
@@ -141,7 +192,10 @@ begin
   F := autofree TIniFile.Create(Filename);
 
   with System do
-    F.WriteInteger('System', 'DelayDriver', DelayDriver);
+  begin
+    F.WriteString('System', 'DelayDriver', DelayDriverToString(DelayDriver));
+    F.WriteInteger('System', 'LogLevel', LogLevel);
+  end;
 
   with Window do
   begin
@@ -186,9 +240,11 @@ begin
     F.WriteInteger('Joystick', 'RightKey', LeftKey);
     F.WriteInteger('Joystick', 'UpKey', UpKey);
     F.WriteInteger('Joystick', 'DownKey', DownKey);
+    F.WriteInteger('Joystick', 'Fire1Key', Fire1Key);
+    F.WriteInteger('Joystick', 'Fire2Key', Fire2Key);
   end;
 
-  F.WriteString('Gamepad', 'Name', 'Gamepad.Name');
+  F.WriteString('Gamepad', 'Name', Gamepad.Name);
 end;
 
 initialization

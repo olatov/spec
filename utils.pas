@@ -4,16 +4,27 @@ unit Utils;
 
 interface
 
-procedure Delay(ASecs: Double); inline;
+type
+  TDelayProc = procedure(ASecs: Double);
+
+var
+  Delay: TDelayProc;
 
 implementation
 
-{$if defined(USE_SDL3_DELAYNS) or defined(USE_SDL3_DELAYPRECISE)}
 uses
-  DynLibs;
+  {$if defined(mswindows)}
+    Windows, MMSystem,
+  {$elseif defined(unix)}
+    BaseUnix,
+  {$endif}
+  SysUtils, DynLibs,
+  Raylib,
+  AppSettings;
 
 var
-  SDL3Handle: TLibHandle;
+  SDL3Handle: TLibHandle = NilHandle;
+  SDL_DelayFunc: procedure(NS: UInt64); cdecl; = Nil;
 
 const
   SDL3File =
@@ -25,33 +36,18 @@ const
       'libSDL3.so'
     {$endif};
 
-  SDLDelayFuncName =
-    {$if defined(USE_SDL3_DELAYPRECISE)}
-      'SDL_DelayPrecise'
-    {$else}
-      'SDL_DelayNS'
-    {$endif};
+procedure DelayRaylib(ASecs: Double);
+begin
+  Raylib.WaitTime(ASecs);
+end;
 
-var
-  SDL_DelayFunc: procedure(NS: UInt64); cdecl;
-
-procedure Delay(ASecs: Double); inline;
+procedure DelaySDL3(ASecs: Double);
 begin
   SDL_DelayFunc(Trunc(ASecs * 1.0e+9));
 end;
 
-initialization
-  SDL3Handle := LoadLibrary(SDL3File);
-  Pointer(SDL_DelayFunc) := GetProcAddress(SDL3Handle, SDLDelayFuncName);
-
-finalization
-  UnloadLibrary(SDL3Handle);
-
-{$elseif defined(unix)}
-uses
-  BaseUnix, SysUtils;
-
-procedure Delay(ASecs: Double); inline;
+{$ifdef unix}
+procedure DelayNanoSleep(ASecs: Double); inline;
 var
   TS: array[1..2] of TTimeSpec;
   Requested, Remaining: PTimeSpec;
@@ -78,10 +74,9 @@ begin
     if Interrupted then Swap<ptimespec>(Requested, Remaining);
   until not Interrupted;
 end;
-{$elseif defined(mswindows)}
-uses
-  Windows, MMSystem;
+{$endif}
 
+{$ifdef mswindows}
 const
   { None of these are in FPC's Windows unit. ProcessPowerThrottling is the
     fifth member of PROCESS_INFORMATION_CLASS; the flag values are the ones
@@ -99,7 +94,6 @@ type
     StateMask: ULONG;
   end;
 
-type
   TSetProcessInformation = function(hProcess: THandle;
     ProcessInformationClass: DWORD; ProcessInformation: Pointer;
     ProcessInformationSize: DWORD): BOOL; stdcall;
@@ -109,11 +103,6 @@ var
     load-time import would stop the process starting at all on Windows 7 and
     earlier, so it is resolved by hand and left nil where absent. }
   SetProcessInformation: TSetProcessInformation;
-
-procedure Delay(ASecs: Double); inline;
-begin
-  Sleep(Trunc(ASecs * 1000));
-end;
 
 { Windows 11 stops honouring a process's timer resolution request once its
   window is fully occluded or minimised and the process is silent, at which
@@ -142,18 +131,69 @@ begin
     SetProcessInformation(GetCurrentProcess, ProcessPowerThrottling,
       @State, SizeOf(State));
 end;
+{$endif}
+
+procedure DelaySleep(ASecs: Double); inline;
+begin
+  Sleep(Trunc(ASecs * 1000));
+end;
+
+procedure LoadSDL3;
+begin
+  SDL3Handle := DynLibs.LoadLibrary(SDL3File);
+  if SDL3Handle = NilHandle then
+    raise Exception.CreateFmt('%s could not be loaded', [SDL3File]);
+
+  Pointer(SDL_DelayFunc) := Dynlibs.GetProcAddress(SDL3Handle,
+    if Settings.System.DelayDriver = ddSDL3DelayNS
+      then 'SDL_DelayNS'
+      else 'SDL_DelayPrecise');
+end;
+
+procedure UnloadSDL3;
+begin
+  UnloadLibrary(SDL3Handle);
+end;
 
 initialization
-  Pointer(SetProcessInformation) :=
-    GetProcAddress(GetModuleHandle('kernel32'), 'SetProcessInformation');
-  KeepTimerResolution;
-  timeBeginPeriod(TimerPeriod);
+  Delay := @DelaySleep;
+  case Settings.System.DelayDriver of
+    ddDefault:
+      begin
+        {$if defined(mswindows)}
+          Pointer(SetProcessInformation) :=
+            GetProcAddress(GetModuleHandle('kernel32'), 'SetProcessInformation');
+          KeepTimerResolution;
+          timeBeginPeriod(TimerPeriod);
+        {$elseif defined(unix)}
+          Delay := @DelayNanoSleep;
+        {$else}
+          Delay := @DelaySleep;
+        {$endif}
+      end;
+
+    ddRaylib:
+      Delay := @DelayRaylib;
+
+    ddSDL3DelayNS, ddSDl3DelayPrecise:
+      begin
+        LoadSDL3;
+        Delay := @DelaySDL3;
+      end;
+  end;
 
 finalization
-  timeEndPeriod(TimerPeriod);
-{$else}
-  {$fail 'Unsupported platform'}
-{$endif}
+  case Settings.System.DelayDriver of
+    ddDefault:
+      begin
+        {$ifdef mswindows}
+          timeEndPeriod(TimerPeriod);
+        {$endif}
+      end;
+
+    ddSDL3DelayNS, ddSDL3DelayPrecise:
+      UnloadSDL3;
+  end;
 
 end.
 

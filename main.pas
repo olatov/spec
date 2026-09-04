@@ -30,7 +30,7 @@ interface
 
 uses
   {$ifdef mswindows} Windows, {$endif}
-  Classes, SysUtils, Math, CTypes, IniFiles, System.IOUtils,
+  Classes, SysUtils, Math, CTypes, System.IOUtils,
   Raylib, RayMath,
   Utils,
   Z80, Spectrum, OSDMenu, Keyboards, Joysticks, Catalogs, AppSettings;
@@ -42,8 +42,6 @@ type
   end;
 
   TTVType = (tvColor = 0, tvBW, tvModernSmooth, tvModernSharp, tvModernScaleFX);
-
-  TDelayDriver = (ddNone = 0, ddDefault = 1, ddRaylib = 2, ddSDL3 = 3);
 
   TApplication = class(TComponent)
   private
@@ -957,7 +955,9 @@ constructor TApplication.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
 
-  //SetTraceLogLevel(LOG_ERROR);
+  SetTraceLogLevel(Settings.System.LogLevel);
+  TraceLog(LOG_INFO, PChar($'Conf file: {Settings.Filename}'));
+  TraceLog(LOG_INFO, PChar($'Delay driver: {Settings.DelayDriverToString(Settings.System.DelayDriver)}'));
 
   if not LoadLib80 then
     raise Exception.Create('Fatal: unable to load Z80 library');
@@ -999,6 +999,9 @@ begin
   if IsImageValid(Image) then UnloadImage(Image);
 
   if IsTextureValid(KeyboardTexture) then UnloadTexture(KeyboardTexture);
+
+  Settings.Window.Width := Max(GetScreenWidth, 352);
+  Settings.Window.Height := Max(GetScreenHeight, 288);
 
   if IsWindowReady then CloseWindow;
 end;
@@ -1074,12 +1077,14 @@ begin
     touches CORE.Time.target and is safe to call this early - and DRM's mode
     search then has a chance to match the emulator's own rate. }
 
-  if TDelayDriver(Settings.System.DelayDriver) = ddRaylib then SetTargetFPS(FPS);
-
   InitWindow(Settings.Window.Width, Settings.Window.Height, 'Spec');
 
   SetWindowState(FLAG_WINDOW_RESIZABLE);
-  ClearWindowState(FLAG_VSYNC_HINT);
+
+  if Settings.System.DelayDriver = ddVSync then
+    SetWindowState(FLAG_VSYNC_HINT)
+  else
+    ClearWindowState(FLAG_VSYNC_HINT);
 
   SetFullscreen(Settings.Window.Fullscreen);
 
@@ -1555,9 +1560,7 @@ procedure TApplication.Run;
 var
   Error: String;
   Requested: Boolean;
-  {$ifdef USE_DELAY}
-    FrameTime, Delta: Double;
-  {$endif}
+  FrameTime, Delta: Double;
 begin
   Machine.Power := True;
 
@@ -1618,7 +1621,8 @@ begin
     RunFrame;
     if Turbo then Continue;
 
-    {$ifdef USE_DELAY}
+    if Settings.System.DelayDriver in [ddDefault, ddRaylib, ddSDL3DelayNS, ddSDL3DelayPrecise, ddSleep] then
+    begin
       FrameTime := FrameTime + (1 / FPS);
 
       { The schedule is absolute, so a frame that overshoots is made up by the
@@ -1633,7 +1637,7 @@ begin
 
       Delta := (1 / FPS) - GetTime + FrameTime;
       if Delta > 0 then Delay(Delta);
-    {$endif}
+    end;
   end;
 
   StopAudioStream(AudioStream);
