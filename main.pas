@@ -2,30 +2,6 @@ unit main;
 
 {$mode unleashed}
 
-{$ifdef darwin}
-  {
-    raylib paces frames by waiting out whatever is left of the target period
-    after the frame's own work - rcore.c does WaitTime(target - update - draw)
-    - which is measured against that one frame and never against a running
-    schedule, so however far the wait overshoots is kept rather than made up.
-    On macOS that wait ends in usleep() with a 5% busy-wait reserve, around
-    0.8 ms of a 16.5 ms wait, and macOS overshoots that often enough to matter:
-    frames come out at 20.13 ms instead of 20.00.
-
-    A 0.7% shortfall is invisible as video and fatal as audio. The emulator
-    ends up generating about 43,800 samples a second for a device consuming
-    44,100, so the stream's two 100 ms buffers run dry some twelve seconds in,
-    and from then on every chunk arrives into a device that has already played
-    silence - a click, ten times a second, for the rest of the session. Linux
-    takes WaitTime's nanosleep branch instead, whose overshoot stays inside the
-    reserve, which is why none of this shows up there.
-
-    Run's loop below keeps an absolute schedule of its own instead, so a frame
-    that overshoots is made up by the next one rather than by every one after
-    it, and NanoSleep replaces the frame limiter.
-  }
-{$endif}
-
 interface
 
 uses
@@ -212,7 +188,6 @@ implementation
 
 procedure SetOSD(AText: String; ADuration: Double = 2); forward;
 
-{$ifdef DEBUG_AUDIO}
 { ---------------------------------------------------------------------------
   Audio pacing instrumentation. Off unless SPEC_AUDIO_STATS=1 is set in the
   environment, at which point a summary lands on stdout once a second.
@@ -240,7 +215,6 @@ const
 
 var
   Stats: record
-    Enabled: Boolean;
     Start, NextReport: Double;
 
     { main thread }
@@ -336,8 +310,7 @@ end;
 
 procedure StatsInit;
 begin
-  Stats.Enabled := GetEnvironmentVariable('SPEC_AUDIO_STATS') = '1';
-  if not Stats.Enabled then Exit;
+  if not Settings.Audio.Debug then Exit;
 
   Stats.Start := GetTime;
   Stats.MarkTime := Stats.Start;
@@ -355,8 +328,7 @@ end;
 
 procedure StatsShutdown;
 begin
-  if not Stats.Enabled then Exit;
-  Stats.Enabled := False;
+  if not Settings.Audio.Debug then Exit;
   DetachAudioMixedProcessor(@AudioStatsProbe);
 end;
 
@@ -365,7 +337,7 @@ procedure StatsChunk(AAccepted, AStarved: Boolean; AUpdateMilliseconds: Double);
 var
   Now, Gap: Double;
 begin
-  if not Stats.Enabled then Exit;
+  if not Settings.Audio.Debug then Exit;
 
   Now := GetTime;
   if Stats.LastPush > 0 then
@@ -473,7 +445,7 @@ end;
   way is "period", the wall time between the starts of consecutive frames. }
 procedure StatsFrame(AStart, AEmuDone, ABlitDone, AFrameDone: Double; AIdle: Boolean);
 begin
-  if not Stats.Enabled then Exit;
+  if not Settings.Audio.Debug then Exit;
 
   Inc(Stats.Frames);
   if AIdle then Inc(Stats.IdleFrames);
@@ -487,7 +459,6 @@ begin
 
   if AFrameDone >= Stats.NextReport then StatsReport;
 end;
-{$endif DEBUG_AUDIO}
 
 procedure TApplication.SetFullscreen(AValue: Boolean);
 begin
@@ -983,9 +954,7 @@ begin
 
   FreeAndNil(Machine);
 
-  {$ifdef DEBUG_AUDIO}
-    StatsShutdown;
-  {$endif}
+  if Settings.Audio.Debug then StatsShutdown;
   if IsAudioStreamValid(AudioStream) then UnloadAudioStream(AudioStream);
   if IsAudioDeviceReady then CloseAudioDevice;
 
@@ -1149,9 +1118,7 @@ begin
   AudioStream := LoadAudioStream(AudioFrequency, 16, 1);
   SetVolume(Settings.Audio.Volume);
 
-  {$ifdef DEBUG_AUDIO}
-    StatsInit;
-  {$endif}
+  if Settings.Audio.Debug then StatsInit;
 end;
 
 function TApplication.LoadFont: TFont;
@@ -1623,6 +1590,28 @@ begin
 
     if Settings.System.DelayDriver in [ddDefault, ddRaylib, ddSDL3DelayNS, ddSDL3DelayPrecise, ddSleep] then
     begin
+      {
+        raylib paces frames by waiting out whatever is left of the target period
+        after the frame's own work - rcore.c does WaitTime(target - update - draw)
+        - which is measured against that one frame and never against a running
+        schedule, so however far the wait overshoots is kept rather than made up.
+        On macOS that wait ends in usleep() with a 5% busy-wait reserve, around
+        0.8 ms of a 16.5 ms wait, and macOS overshoots that often enough to matter:
+        frames come out at 20.13 ms instead of 20.00.
+
+        A 0.7% shortfall is invisible as video and fatal as audio. The emulator
+        ends up generating about 43,800 samples a second for a device consuming
+        44,100, so the stream's two 100 ms buffers run dry some twelve seconds in,
+        and from then on every chunk arrives into a device that has already played
+        silence - a click, ten times a second, for the rest of the session. Linux
+        takes WaitTime's nanosleep branch instead, whose overshoot stays inside the
+        reserve, which is why none of this shows up there.
+
+        Run's loop below keeps an absolute schedule of its own instead, so a frame
+        that overshoots is made up by the next one rather than by every one after
+        it, and NanoSleep replaces the frame limiter.
+      }
+
       FrameTime := FrameTime + (1 / FPS);
 
       { The schedule is absolute, so a frame that overshoots is made up by the
