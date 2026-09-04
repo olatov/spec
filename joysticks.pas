@@ -263,8 +263,10 @@ begin
 end;
 
 function TSinclairJoystick.GetName: String;
+var
+  Info: array[1..2] of String = ('12345', '67890');
 begin
-  Result := $'Sinclair ({Index})';
+  Result := $'Sinclair / {Info[Index]}';
 end;
 
 function TSinclairJoystick.Poll(APort: Word): Byte;

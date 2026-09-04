@@ -173,7 +173,7 @@ begin
 
   with Joystick do
   begin
-    Index := F.ReadInteger('Joystick', 'Index', 0);
+    Index := F.ReadInteger('Joystick', 'Index', 1);
     LeftKey := F.ReadInteger('Joystick', 'LeftKey', KEY_LEFT);
     RightKey := F.ReadInteger('Joystick', 'RightKey', KEY_RIGHT);
     UpKey := F.ReadInteger('Joystick', 'UpKey', KEY_UP);
@@ -240,7 +240,7 @@ begin
   begin
     F.WriteInteger('Joystick', 'Index', Index);
     F.WriteInteger('Joystick', 'LeftKey', LeftKey);
-    F.WriteInteger('Joystick', 'RightKey', LeftKey);
+    F.WriteInteger('Joystick', 'RightKey', RightKey);
     F.WriteInteger('Joystick', 'UpKey', UpKey);
     F.WriteInteger('Joystick', 'DownKey', DownKey);
     F.WriteInteger('Joystick', 'Fire1Key', Fire1Key);
