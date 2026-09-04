@@ -1563,9 +1563,8 @@ begin
 
   SetExitKey(KEY_NULL);
 
-  {$ifdef USE_DELAY}
+  if Settings.System.DelayDriver in [ddDefault, ddRaylib, ddSDL3DelayNS, ddSDL3DelayPrecise, ddSleep] then
     FrameTime := GetTime;
-  {$endif}
 
   while not (WindowShouldClose or QuitRequested) do
   begin
