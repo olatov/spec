@@ -137,7 +137,7 @@ begin
   with Audio do
   begin
     Muted := F.ReadBool('Audio', 'Muted', False);
-    Volume := F.ReadFloat('Audio', 'Volume', 0.25);
+    Volume := F.ReadFloat('Audio', 'Volume', 0.35);
     Stats := F.ReadBool('Audio', 'Stats', False);
   end;
 
