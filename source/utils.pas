@@ -36,11 +36,11 @@ function UserDataDir: String;
 begin
   if not FUserDataDir.IsEmpty then Exit(FUserDataDir);
 
-  FUserDataDir := GetEnvironmentVariable('SPEC_DATA_DIR');
+  FUserDataDir := SysUtils.GetEnvironmentVariable('SPEC_DATA_DIR');
 
   {$ifdef darwin}
   if FUserDataDir.IsEmpty then
-    FUserDataDir := TPath.Combine(GetEnvironmentVariable('HOME'),
+    FUserDataDir := TPath.Combine(SysUtils.GetEnvironmentVariable('HOME'),
       'Library/Application Support/spec');
   {$endif}
 
