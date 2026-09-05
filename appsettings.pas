@@ -6,7 +6,7 @@ interface
 
 uses
   Classes, SysUtils, IniFiles, FGL,
-  Raylib;
+  Raylib, Joysticks;
 
 type
   TDelayDriver = (
@@ -52,17 +52,26 @@ type
       BrowsePath: String;
     end;
     Joystick: record
+      { Which of the machine's joystick interfaces is plugged in. What works
+        it is a binding, and those live in TJoystick rather than here - the
+        file keeps them in sections of their own. }
       Index: Integer;
-      LeftKey, RightKey, UpKey, DownKey, Fire1Key, Fire2Key: TKeyboardKey;
     end;
     Gamepad: record
+      { The pad to come back to when several are plugged in, remembered by the
+        name it reports rather than by the socket it was in. }
       Name: String;
+      Deadzone: Single;
     end;
     function ParseDelayDriver(AValue: String): TDelayDriver;
     function DelayDriverToString(AValue: TDelayDriver): String;
     constructor Create(AFilename: String);
     procedure Load;
     procedure Save;
+    { Puts the bindings belonging to the pad AName in place of the ones now
+      loaded, filing the outgoing pad's away first so nothing taught this
+      session is lost when pads are swapped. }
+    procedure SwitchGamepadProfile(const AName: String);
   end;
 
 var
@@ -153,20 +162,17 @@ begin
     BrowsePath := SavePath;
   end;
 
-  with Joystick do
-  begin
-    Index := F.ReadInteger('Joystick', 'Index', 1);
-    LeftKey := F.ReadInteger('Joystick', 'LeftKey', KEY_LEFT);
-    RightKey := F.ReadInteger('Joystick', 'RightKey', KEY_RIGHT);
-    UpKey := F.ReadInteger('Joystick', 'UpKey', KEY_UP);
-    DownKey := F.ReadInteger('Joystick', 'DownKey', KEY_DOWN);
-    Fire1Key := F.ReadInteger('Joystick', 'Fire1Key',
-      {$ifdef darwin} KEY_LEFT_SUPER {$else} KEY_LEFT_ALT {$endif});
-    Fire2Key := F.ReadInteger('Joystick', 'Fire2Key',
-      {$ifdef darwin} KEY_RIGHT_SUPER {$else} KEY_RIGHT_ALT {$endif});
-  end;
+  Joystick.Index := F.ReadInteger('Joystick', 'Index', 1);
 
-  Gamepad.Name := F.ReadString('GamePad', 'Name', '');
+  { The keys only. Which pad is plugged in is not known until raylib is up, so
+    its half is loaded later, from SwitchGamepadProfile. }
+  TJoystick.LoadBindings(F);
+
+  with Gamepad do
+  begin
+    Name := F.ReadString('Gamepad', 'Name', '');
+    Deadzone := F.ReadFloat('Gamepad', 'Deadzone', 0.5);
+  end;
 end;
 
 procedure TAppSettings.Save;
@@ -218,18 +224,30 @@ begin
     F.WriteBool('Tape', 'Save', Save);
   end;
 
-  with Joystick do
-  begin
-    F.WriteInteger('Joystick', 'Index', Index);
-    F.WriteInteger('Joystick', 'LeftKey', LeftKey);
-    F.WriteInteger('Joystick', 'RightKey', RightKey);
-    F.WriteInteger('Joystick', 'UpKey', UpKey);
-    F.WriteInteger('Joystick', 'DownKey', DownKey);
-    F.WriteInteger('Joystick', 'Fire1Key', Fire1Key);
-    F.WriteInteger('Joystick', 'Fire2Key', Fire2Key);
-  end;
+  F.WriteInteger('Joystick', 'Index', Joystick.Index);
 
-  F.WriteString('Gamepad', 'Name', Gamepad.Name);
+  TJoystick.SaveBindings(F);
+
+  with Gamepad do
+  begin
+    F.WriteString('Gamepad', 'Name', Name);
+    F.WriteFloat('Gamepad', 'Deadzone', Deadzone);
+  end;
+end;
+
+procedure TAppSettings.SwitchGamepadProfile(const AName: String);
+var
+  F: TIniFile;
+begin
+  F := autofree TIniFile.Create(Filename);
+
+  { Whatever the player taught the outgoing pad is filed under its name before
+    the incoming pad's bindings take its place in memory. }
+  TJoystick.SaveGamepadBindings(F);
+
+  { A pad going away leaves the bindings where they are: there is nothing to
+    put in their place, and it is most likely the same pad coming back. }
+  if not AName.IsEmpty then TJoystick.LoadGamepadBindings(F, AName);
 end;
 
 initialization

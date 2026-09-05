@@ -6,19 +6,20 @@ interface
 
 uses
   Classes, SysUtils, Math, FGL,
-  Raylib;
+  Raylib, Inputs;
 
 type
   TMenu = class;
   TMenuItem = class;
   TEditMenuItem = class;
   TFileMenuItem = class;
-  TKeyMenuItem = class;
+  TBindMenuItem = class;
   TMenuNotify = reference to procedure(ASender: TMenu; AQuit: Boolean);
   TMenuItemNotify = reference to procedure(ASender: TMenuItem);
   TMenuEditNotify = reference to procedure(ASender: TEditMenuItem);
   TMenuBrowseNotify = reference to procedure(ASender: TFileMenuItem);
-  TMenuKeyNotify = reference to procedure(ASender: TKeyMenuItem; AKey: TKeyboardKey);
+  TMenuBindNotify = reference to procedure(ASender: TBindMenuItem;
+    const ASource: TInputSource);
   TMenuItemList = TFPGObjectList<TMenuItem>;
 
   { One entry in the menu, and - for items that have children or are a dialog -
@@ -54,8 +55,8 @@ type
       TEditMenuItem;
     function AddBrowser(AText: String; APath: String; AOnBrowse: TMenuBrowseNotify):
       TFileMenuItem;
-    function AddKey(AText: String; APrompt: String; AOnCapture: TMenuKeyNotify):
-      TKeyMenuItem;
+    function AddBind(AText: String; APrompt: String; AOnCapture: TMenuBindNotify):
+      TBindMenuItem;
     { Chosen from the parent page: plain items just run OnApply, items that
       have children take over the screen. }
     procedure Apply; virtual;
@@ -120,14 +121,15 @@ type
     procedure Render(ATop: Integer); override;
   end;
 
-  { A page that waits for a single keystroke and hands it to its owner - how a
-    binding is re-taught. Value is the binding as it stands, which the owner
-    refreshes from OnCapture. ESC leaves it alone; DEL clears it, since a key
-    that means "no key" is the one thing no keystroke can say. }
-  TKeyMenuItem = class(TMenuItem)
+  { A page that waits for one press - a key, a pad button or a stick pushed -
+    and hands it to its owner: how a binding is re-taught. Value is the binding
+    as it stands, which the owner refreshes from OnCapture. ESC leaves it
+    alone; DEL clears it, since an input that means "nothing" is the one thing
+    no press can say. }
+  TBindMenuItem = class(TMenuItem)
   public
     Prompt: String;
-    OnCapture: TMenuKeyNotify;
+    OnCapture: TMenuBindNotify;
     procedure Apply; override;
     procedure HandleInput; override;
     procedure Render(ATop: Integer); override;
@@ -306,9 +308,9 @@ begin
   Filter := '';
 end;
 
-function TMenuItem.AddKey(AText: String; APrompt: String; AOnCapture: TMenuKeyNotify): TKeyMenuItem;
+function TMenuItem.AddBind(AText: String; APrompt: String; AOnCapture: TMenuBindNotify): TBindMenuItem;
 begin
-  Result := TKeyMenuItem.Create(Self);
+  Result := TBindMenuItem.Create(Self);
   Result.Font := Font;
   Result.Text := AText;
   Result.Prompt := APrompt;
@@ -329,10 +331,14 @@ procedure TMenuItem.HandleInput;
 var
   Key: TKeyboardKey;
 begin
-  if IsKeyPressed(KEY_UP) or IsKeyPressedRepeat(KEY_UP) then Previous;
-  if IsKeyPressed(KEY_DOWN) or IsKeyPressedRepeat(KEY_DOWN) then Next;
-  if IsKeyPressed(KEY_PAGE_UP) or IsKeyPressedRepeat(KEY_PAGE_UP) then PageUp;
-  if IsKeyPressed(KEY_PAGE_DOWN) or IsKeyPressedRepeat(KEY_PAGE_DOWN) then PageDown;
+  if IsKeyPressed(KEY_UP) or IsKeyPressedRepeat(KEY_UP)
+    or TPadNavigation.Pressed(paUp) then Previous;
+  if IsKeyPressed(KEY_DOWN) or IsKeyPressedRepeat(KEY_DOWN)
+    or TPadNavigation.Pressed(paDown) then Next;
+  if IsKeyPressed(KEY_PAGE_UP) or IsKeyPressedRepeat(KEY_PAGE_UP)
+    or TPadNavigation.Pressed(paPageUp) then PageUp;
+  if IsKeyPressed(KEY_PAGE_DOWN) or IsKeyPressedRepeat(KEY_PAGE_DOWN)
+    or TPadNavigation.Pressed(paPageDown) then PageDown;
   if IsKeyPressed(KEY_HOME) then Home;
   if IsKeyPressed(KEY_END) then End_;
 
@@ -345,14 +351,15 @@ begin
       Filter := LeftStr(Filter, Max(Length(Filter) - 1, 0));
   end;
 
-  if IsKeyPressed(KEY_ESCAPE) then
+  if IsKeyPressed(KEY_ESCAPE) or TPadNavigation.Pressed(paBack) then
   begin
     Menu.Back;
     Exit;
   end;
   { Last, and nothing after it: the item may close the menu, which frees
     everything here. }
-  if IsKeyPressed(KEY_ENTER) and Assigned(SelectedItem) then SelectedItem.Apply;
+  if (IsKeyPressed(KEY_ENTER) or TPadNavigation.Pressed(paSelect))
+    and Assigned(SelectedItem) then SelectedItem.Apply;
 end;
 
 procedure TMenuItem.AfterInput;
@@ -521,7 +528,9 @@ begin
 
   if Edited then Changed;
 
-  if IsKeyPressed(KEY_ESCAPE) then
+  { There is no typing on a pad, but a page with no way out of it is worse
+    than one that cannot be filled in. }
+  if IsKeyPressed(KEY_ESCAPE) or TPadNavigation.Pressed(paBack) then
   begin
     Menu.Back;
     Exit;
@@ -610,19 +619,19 @@ begin
   inherited Render(ATop + 52);
 end;
 
-procedure TKeyMenuItem.Apply;
+procedure TBindMenuItem.Apply;
 begin
   if Assigned(OnApply) then OnApply(Self);
   Menu.Show(Self);
-  { The ENTER that opened this page is still in the key queue, and this page
-    binds whatever it finds there - so it is dropped, along with anything else
-    typed before the page was asked for. }
-  while GetKeyPressed <> KEY_NULL do ;
+  { The ENTER or the button that opened this page is still held, and this page
+    binds whatever it finds down - so nothing counts until it has been let go
+    of, and anything typed before the page was asked for is dropped. }
+  TInputCapture.Arm;
 end;
 
-procedure TKeyMenuItem.HandleInput;
+procedure TBindMenuItem.HandleInput;
 var
-  Key: TKeyboardKey;
+  Source: TInputSource;
 begin
   if IsKeyPressed(KEY_ESCAPE) then
   begin
@@ -630,27 +639,32 @@ begin
     Exit;
   end;
 
-  Key := GetKeyPressed;
-  if Key = KEY_NULL then Exit;
+  Source := TInputCapture.Poll;
+  if Source.Kind = ikNone then Exit;
 
-  { DEL is the one keystroke that stands for no key rather than for itself. }
-  if Key = KEY_DELETE then Key := KEY_NULL;
+  { Every button on the page is one to bind, including the ones that work the
+    menu - so the press stops here rather than also being acted on. }
+  TPadNavigation.Consume;
+
+  { DEL is the one press that stands for no input rather than for itself. }
+  if (Source.Kind = ikKey) and (Source.Code = KEY_DELETE) then
+    Source := TInputSource.None;
 
   { OnCapture may free this item along with the page it belongs to, so Back
     is the only thing allowed after it. }
-  if Assigned(OnCapture) then OnCapture(Self, Key);
+  if Assigned(OnCapture) then OnCapture(Self, Source);
   Menu.Back;
 end;
 
-procedure TKeyMenuItem.Render(ATop: Integer);
+procedure TBindMenuItem.Render(ATop: Integer);
 begin
   DrawTextEx(Font, PChar(Prompt), [MenuLeft, ATop], MenuTextSize, 0, ORANGE);
   DrawTextEx(Font, PChar(Value), [MenuLeft, ATop + 48], 32, 0, YELLOW);
 end;
 
-function TKeyMenuItem.Footer: String;
+function TBindMenuItem.Footer: String;
 begin
-  Result := 'Press a key    DEL - Clear    ESC - Cancel';
+  Result := 'Press a key or a pad button    DEL - Clear    ESC - Cancel';
 end;
 
 constructor TRootMenuItem.Create(AParent: TMenu);
@@ -673,7 +687,8 @@ begin
   Page := FCurrent;
   Page.HandleInput;
 
-  FCloseRequested := FCloseRequested or IsKeyPressed(KEY_F1);
+  FCloseRequested := FCloseRequested or IsKeyPressed(KEY_F1)
+    or TPadNavigation.Pressed(paMenu);
 
   { Work the page put off while its own items were running - but not if one of
     them opened another page, or asked to leave. }

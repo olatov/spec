@@ -10,7 +10,7 @@ uses
   Classes, SysUtils, Math, CTypes, System.IOUtils, Nullable,
   Raylib, RayMath,
   Utils,
-  Z80, Spectrum, OSDMenu, Keyboards, Joysticks, Catalogs, AppSettings;
+  Z80, Spectrum, OSDMenu, Keyboards, Inputs, Joysticks, Catalogs, AppSettings;
 
 type
   TSimpleTimer = record
@@ -1014,16 +1014,6 @@ begin
 
   Settings.Tape.Save := Machine.SaveToWav;
 
-  with Settings.Joystick do
-  begin
-    LeftKey := Machine.Joystick.KeyBindings[jcLeft];
-    RightKey := Machine.Joystick.KeyBindings[jcRight];
-    UpKey := Machine.Joystick.KeyBindings[jcUp];
-    DownKey := Machine.Joystick.KeyBindings[jcDown];
-    Fire1Key := Machine.Joystick.KeyBindings[jcFire1];
-    Fire2Key := Machine.Joystick.KeyBindings[jcFire2];
-  end;
-
   FreeAndNil(Machine);
 
   if Settings.Audio.Stats then StatsShutdown;
@@ -1072,8 +1062,6 @@ procedure TApplication.Initialize;
       end;
   end;
 
-var
-  I: Integer;
 begin
   Palette := [
     GetColor($000000FF),
@@ -1153,23 +1141,26 @@ begin
   if Machine.JoystickIndex >= Machine.Joysticks.Count then
     Machine.JoystickIndex := 0;
 
-  for I := 0 to 7 do
-    if IsGamepadAvailable(I) then
+  { Ahead of anything being read from a pad, so the first frame already sees
+    the right buttons on a pad raylib does not know by itself. The file is
+    optional and usually absent. }
+  TGamepad.LoadMappings('gamecontrollerdb.txt');
+  TGamepad.Deadzone := EnsureRange(Settings.Gamepad.Deadzone, 0.05, 0.95);
+  TGamepad.PreferredName := Settings.Gamepad.Name;
+  { Which pad is in use is settled frame by frame from here on (see
+    HandleInput), and this is how the player is told about it - a pad found or
+    lost mid-game is otherwise silent. }
+  TGamepad.OnChanged := procedure(const AName: String)
     begin
-      TJoystick.GamepadIndex := I;
-      TraceLog(LOG_INFO, PChar($'Gamepad detected: [{I}] {GetGamepadName(I)}'));
-      Break;
-    end;
+      Settings.Gamepad.Name := TGamepad.PreferredName;
+      { Each pad brings its own bindings with it. }
+      Settings.SwitchGamepadProfile(AName);
 
-  with TJoystick do
-  begin
-    KeyBindings[jcLeft] := Settings.Joystick.LeftKey;
-    KeyBindings[jcRight] := Settings.Joystick.RightKey;
-    KeyBindings[jcUp] := Settings.Joystick.UpKey;
-    KeyBindings[jcDown] := Settings.Joystick.DownKey;
-    KeyBindings[jcFire1] := Settings.Joystick.Fire1Key;
-    KeyBindings[jcFire2] := Settings.Joystick.Fire2Key;
-  end;
+      if AName.IsEmpty then
+        SetOSD('Gamepad disconnected')
+      else
+        SetOSD($'Gamepad: {AName}');
+    end;
 
   Target := LoadRenderTexture(352, 288);
 
@@ -1498,15 +1489,33 @@ var
 begin
   Page := AParent.AddItem('Controls');
 
+  { Whether the pad is being seen at all is the first question when it does
+    nothing, and nothing else on this page answers it. Choosing the line looks
+    again, for a pad plugged in since the menu opened. }
+  Page.AddItem('Gamepad',
+    if TGamepad.Available then TGamepad.Name else 'none',
+    procedure(Sender: TMenuItem)
+    begin
+      Sender.Value := if TGamepad.Available then TGamepad.Name else 'none';
+    end);
+
   for Control := Low(TJoystickControl) to High(TJoystickControl) do
   begin
-    Item := Page.AddKey(JoystickControlNames[Control],
-      $'Press the key for {JoystickControlNames[Control]}:',
-      procedure(Sender: TKeyMenuItem; AKey: TKeyboardKey)
+    Item := Page.AddBind(JoystickControlNames[Control],
+      $'Press the key or button for {JoystickControlNames[Control]}:',
+      procedure(Sender: TBindMenuItem; const ASource: TInputSource)
+      var
+        Bound: TJoystickControl;
       begin
-        TJoystick.Bind(TJoystickControl(StrToInt(Sender.Data)), AKey);
-        { Bind may have taken the key off whichever control had it before, so
-          the whole page is refreshed rather than just this line. }
+        Bound := TJoystickControl(StrToInt(Sender.Data));
+        { Nothing captured is DEL, which is the way to say "leave this
+          control with nothing on it at all". }
+        if ASource.Kind = ikNone then
+          TJoystick.Unbind(Bound)
+        else
+          TJoystick.Bind(Bound, ASource);
+        { Bind may have taken that press off whichever control had it before,
+          so the whole page is refreshed rather than just this line. }
         RefreshControls(Sender.Parent);
       end);
     Item.Data := IntToStr(Ord(Control));
@@ -1532,9 +1541,8 @@ begin
   for I := 0 to APage.Items.Count - 1 do
   begin
     Item := APage.Items[I];
-    if Item is TKeyMenuItem then
-      Item.Value := TKeyboard.KeyName[
-        TJoystick.KeyBindings[TJoystickControl(StrToInt(Item.Data))]];
+    if Item is TBindMenuItem then
+      Item.Value := TJoystick.Describe(TJoystickControl(StrToInt(Item.Data)));
   end;
 end;
 
@@ -1546,9 +1554,10 @@ begin
   Menu.OnClose := procedure(ASender: TMenu; AQuit: Boolean)
     begin
       FreeAndNil(Menu);
-      { The ENTER that chose an item is still down, and the machine is about to
-        run again in this same frame. }
+      { The ENTER or the pad button that chose an item is still down, and the
+        machine is about to run again in this same frame. }
       Machine.Keyboard.SuppressUntilReleased(KEY_ENTER);
+      TGamepad.SuppressHeld;
       { Nothing was generated while the menu was up. }
       PrimeAudio;
     end;
@@ -1709,6 +1718,12 @@ var
   Filename, FullFilename: String;
   I: Integer;
 begin
+  { Before anything reads a pad, and outside the menu check below, so a pad
+    plugged in while the menu is up is found too. }
+  TGamepad.Update;
+  { Once a frame, menu open or not - it is what opens it. }
+  TPadNavigation.Update;
+
   if IsKeyPressed(KEY_F10) then SetFullscreen(not Settings.Window.Fullscreen);
 
   if IsKeyPressed(KEY_SCROLL_LOCK) then
@@ -1741,7 +1756,7 @@ begin
       SetOSD('ESC again to quit');
     end;
 
-  if IsKeyPressed(KEY_F1) then OpenMenu;
+  if IsKeyPressed(KEY_F1) or TPadNavigation.Pressed(paMenu) then OpenMenu;
 
   { Straight to the catalog, skipping the top page. Nothing to show means
     nothing happens, rather than the menu opening on something else. }

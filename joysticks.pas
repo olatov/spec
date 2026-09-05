@@ -5,43 +5,60 @@ unit Joysticks;
 interface
 
 uses
-  Classes, SysUtils, Nullable,
-  Raylib;
+  Classes, SysUtils, IniFiles,
+  Raylib, Inputs;
 
 type
   { The six things a joystick can report. }
   TJoystickControl = (jcLeft, jcRight, jcUp, jcDown, jcFire1, jcFire2);
-  TJoystickKeyBindings = array[TJoystickControl] of TKeyboardKey;
-  TJoystickGamepadBindings = array[TJoystickControl] of TGamepadButton;
+  TJoystickBindings = array[TJoystickControl] of TControlBinding;
 
-  { The interface a game reads its stick through. Which host keys stand for the
-    stick is not part of that - the player has one set of movement keys, and
-    switching between a Kempston and a Cursor interface must not change them -
-    so the bindings are shared by every joystick rather than owned by one. }
+  { The interface a game reads its stick through. What a player presses to work
+    the stick is not part of that - they have one set of controls, and switching
+    between a Kempston and a Cursor interface must not change them - so the
+    bindings are shared by every joystick rather than owned by one. }
   TJoystick = class abstract
   private
-    class var FIsGamepadAvailable: Boolean;
     function GetDown: Boolean;
     function GetFire1: Boolean;
     function GetFire2: Boolean;
-    function GetKeys: TArray<TKeyboardKey>;
     function GetLeft: Boolean;
     function GetName: String; virtual;
     function GetRight: Boolean;
     function GetUp: Boolean;
+    class function GamepadSection(const AName: String): String; static;
   public
     property Name: String read GetName;
-    class var KeyBindings: TJoystickKeyBindings;
-    class var GamepadBindings: TJoystickGamepadBindings;
-    class var GamepadIndex: TNullable<Integer>;
-    { The built-in KeyBindings, also what an absent config setting falls back to. }
+    class var Bindings: TJoystickBindings;
+    { The pad whose bindings are the ones now in Bindings, or '' where no pad
+      has been seen this run. What SaveBindings writes the pad half under -
+      and why it writes nothing when no pad has turned up, rather than filing
+      the built-in defaults under some pad that was never here. }
+    class var GamepadProfile: String;
+    { The built-in bindings, also what an absent config setting falls back to. }
     class procedure ResetBindings; static;
-    { True while the key bound to AControl is held. An unbound control (its
-      binding cleared to KEY_NULL) is never down. }
+    class procedure ResetKeyBindings; static;
+    class procedure ResetGamepadBindings; static;
+    { True while anything bound to AControl is held - the key, the pad button
+      or the stick, whichever the player reached for. }
     class function IsDown(AControl: TJoystickControl): Boolean; static;
-    { Clears every other control bound to AKey, so one keystroke can never
-      mean two directions at once. }
-    class procedure Bind(AControl: TJoystickControl; AKey: TKeyboardKey); static;
+    { Binds ASource to AControl in place of whatever of its own kind was there,
+      and takes it off every other control, so one press can never mean two
+      directions at once. }
+    class procedure Bind(AControl: TJoystickControl; const ASource: TInputSource); static;
+    class procedure Unbind(AControl: TJoystickControl); static;
+    { The binding as the menu shows it. }
+    class function Describe(AControl: TJoystickControl): String; static;
+    { The keys, which belong to the player and stay put whatever is plugged in.
+      Reading them falls back to the pre-profile config format, so a setup made
+      before bindings had a section of their own survives the upgrade. }
+    class procedure LoadBindings(F: TIniFile); static;
+    class procedure SaveBindings(F: TIniFile); static;
+    { The pad half, which belongs to that particular pad and is kept under its
+      name - so two pads can be bound differently and neither forgets when the
+      other is plugged in. A pad the file has never seen gets the defaults. }
+    class procedure LoadGamepadBindings(F: TIniFile; const AName: String); static;
+    class procedure SaveGamepadBindings(F: TIniFile); static;
     function Poll(APort: Word): Byte; virtual;
     property Left: Boolean read GetLeft;
     property Right: Boolean read GetRight;
@@ -49,7 +66,6 @@ type
     property Down: Boolean read GetDown;
     property Fire1: Boolean read GetFire1;
     property Fire2: Boolean read GetFire2;
-    property Keys: TArray<TKeyboardKey> read GetKeys;
   end;
 
   TKeySimulatorJoystick = class(TJoystick);
@@ -92,58 +108,175 @@ const
 
 implementation
 
+const
+  { The section the keys go in - part of the config format, like the control
+    names that are the keys within it. }
+  BindingsSection = 'Bindings';
+  { Where the pad's own half goes, one section per pad. }
+  GamepadSectionPrefix = 'Bindings:';
+
+  { What the keys were called before they had a section: six integers, raylib
+    key codes, in among the rest of the joystick settings. Read once, to carry
+    an existing setup over, and cleared out on the next save. }
+  LegacySection = 'Joystick';
+  LegacyKeyNames: array[TJoystickControl] of String =
+    ('LeftKey', 'RightKey', 'UpKey', 'DownKey', 'Fire1Key', 'Fire2Key');
+
+class procedure TJoystick.ResetKeyBindings; static;
+begin
+  Bind(jcLeft, TInputSource.FromKey(KEY_LEFT));
+  Bind(jcRight, TInputSource.FromKey(KEY_RIGHT));
+  Bind(jcUp, TInputSource.FromKey(KEY_UP));
+  Bind(jcDown, TInputSource.FromKey(KEY_DOWN));
+  {$ifdef Darwin}
+    Bind(jcFire1, TInputSource.FromKey(KEY_LEFT_SUPER));
+    Bind(jcFire2, TInputSource.FromKey(KEY_RIGHT_SUPER));
+  {$else}
+    Bind(jcFire1, TInputSource.FromKey(KEY_LEFT_ALT));
+    Bind(jcFire2, TInputSource.FromKey(KEY_RIGHT_ALT));
+  {$endif}
+end;
+
+class procedure TJoystick.ResetGamepadBindings; static;
+begin
+  { The D-pad and the left stick both. Which of the two a pad reports a
+    direction on is the pad's business rather than the player's, and a pad
+    that has only one of them is common enough that binding only the other
+    reads as the pad not working at all. }
+  Bind(jcLeft, TInputSource.FromButton(GAMEPAD_BUTTON_LEFT_FACE_LEFT));
+  Bind(jcRight, TInputSource.FromButton(GAMEPAD_BUTTON_LEFT_FACE_RIGHT));
+  Bind(jcUp, TInputSource.FromButton(GAMEPAD_BUTTON_LEFT_FACE_UP));
+  Bind(jcDown, TInputSource.FromButton(GAMEPAD_BUTTON_LEFT_FACE_DOWN));
+  Bind(jcFire1, TInputSource.FromButton(GAMEPAD_BUTTON_RIGHT_FACE_DOWN));
+  Bind(jcFire2, TInputSource.FromButton(GAMEPAD_BUTTON_RIGHT_FACE_LEFT));
+
+  Bind(jcLeft, TInputSource.FromAxis(GAMEPAD_AXIS_LEFT_X, -1));
+  Bind(jcRight, TInputSource.FromAxis(GAMEPAD_AXIS_LEFT_X, 1));
+  Bind(jcUp, TInputSource.FromAxis(GAMEPAD_AXIS_LEFT_Y, -1));
+  Bind(jcDown, TInputSource.FromAxis(GAMEPAD_AXIS_LEFT_Y, 1));
+  { Fire is a button on every pad worth the name. }
+  ClearBinding(Bindings[jcFire1], [ikAxis]);
+  ClearBinding(Bindings[jcFire2], [ikAxis]);
+end;
+
 class procedure TJoystick.ResetBindings; static;
 begin
-  KeyBindings[jcLeft] := KEY_LEFT;
-  KeyBindings[jcRight] := KEY_RIGHT;
-  KeyBindings[jcUp] := KEY_UP;
-  KeyBindings[jcDown] := KEY_DOWN;
-  {$ifdef Darwin}
-    KeyBindings[jcFire1] := KEY_LEFT_SUPER;
-    KeyBindings[jcFire2] := KEY_RIGHT_SUPER;
-  {$else}
-    KeyBindings[jcFire1] := KEY_LEFT_ALT;
-    KeyBindings[jcFire2] := KEY_RIGHT_ALT;
-  {$endif}
-
-  GamepadBindings[jcLeft] := GAMEPAD_BUTTON_LEFT_FACE_LEFT;
-  GamepadBindings[jcRight] := GAMEPAD_BUTTON_LEFT_FACE_RIGHT;
-  GamepadBindings[jcUp] := GAMEPAD_BUTTON_LEFT_FACE_UP;
-  GamepadBindings[jcDown] := GAMEPAD_BUTTON_LEFT_FACE_DOWN;
-  GamepadBindings[jcFire1] := GAMEPAD_BUTTON_RIGHT_FACE_DOWN;
-  GamepadBindings[jcFire2] := GAMEPAD_BUTTON_RIGHT_FACE_LEFT;
+  ResetKeyBindings;
+  ResetGamepadBindings;
 end;
 
 class function TJoystick.IsDown(AControl: TJoystickControl): Boolean; static;
 begin
-  Result := (KeyBindings[AControl] <> KEY_NULL) and IsKeyDown(KeyBindings[AControl]);
-  if FIsGamepadAvailable then
-    Result := Result or IsGamepadButtonDown(GamepadIndex.Value, GamepadBindings[AControl]);
+  Result := BindingIsDown(Bindings[AControl]);
 end;
 
-class procedure TJoystick.Bind(AControl: TJoystickControl; AKey: TKeyboardKey); static;
+class procedure TJoystick.Bind(AControl: TJoystickControl; const ASource: TInputSource); static;
 var
   Control: TJoystickControl;
 begin
-  if AKey <> KEY_NULL then
-    for Control := Low(TJoystickControl) to High(TJoystickControl) do
-      if (Control <> AControl) and (KeyBindings[Control] = AKey) then
-        KeyBindings[Control] := KEY_NULL;
+  if ASource.Kind = ikNone then Exit;
 
-  KeyBindings[AControl] := AKey;
+  for Control := Low(TJoystickControl) to High(TJoystickControl) do
+    if (Control <> AControl) and SameSource(Bindings[Control][ASource.Kind], ASource) then
+      Bindings[Control][ASource.Kind] := TInputSource.None;
+
+  SetSource(Bindings[AControl], ASource);
+end;
+
+class procedure TJoystick.Unbind(AControl: TJoystickControl); static;
+begin
+  ClearBinding(Bindings[AControl], AllKinds);
+end;
+
+class function TJoystick.Describe(AControl: TJoystickControl): String; static;
+begin
+  Result := BindingDescription(Bindings[AControl], AllKinds);
+  if Result.IsEmpty then Result := 'none';
+end;
+
+class function TJoystick.GamepadSection(const AName: String): String; static;
+begin
+  Result := GamepadSectionPrefix + AName;
+end;
+
+class procedure TJoystick.LoadBindings(F: TIniFile); static;
+var
+  Control: TJoystickControl;
+begin
+  ResetKeyBindings;
+
+  if F.SectionExists(BindingsSection) then
+    for Control := Low(TJoystickControl) to High(TJoystickControl) do
+      { An absent line keeps the default; a line with nothing after it is a
+        control the player has deliberately left unbound. }
+      ApplyBinding(Bindings[Control],
+        F.ReadString(BindingsSection, JoystickControlNames[Control],
+          BindingToString(Bindings[Control], KeyKinds)),
+        KeyKinds)
+  else
+    for Control := Low(TJoystickControl) to High(TJoystickControl) do
+      if F.ValueExists(LegacySection, LegacyKeyNames[Control]) then
+      begin
+        ClearBinding(Bindings[Control], KeyKinds);
+        SetSource(Bindings[Control], TInputSource.FromKey(
+          F.ReadInteger(LegacySection, LegacyKeyNames[Control], KEY_NULL)));
+      end;
+end;
+
+class procedure TJoystick.SaveBindings(F: TIniFile); static;
+var
+  Control: TJoystickControl;
+begin
+  for Control := Low(TJoystickControl) to High(TJoystickControl) do
+  begin
+    F.WriteString(BindingsSection, JoystickControlNames[Control],
+      BindingToString(Bindings[Control], KeyKinds));
+    { The old six integers say the same thing in a format nothing reads any
+      more, and two answers to one question in a hand-editable file is one
+      too many. }
+    F.DeleteKey(LegacySection, LegacyKeyNames[Control]);
+  end;
+
+  SaveGamepadBindings(F);
+end;
+
+class procedure TJoystick.LoadGamepadBindings(F: TIniFile; const AName: String); static;
+var
+  Control: TJoystickControl;
+  Section: String;
+begin
+  ResetGamepadBindings;
+  GamepadProfile := AName;
+  if AName.IsEmpty then Exit;
+
+  Section := GamepadSection(AName);
+  if not F.SectionExists(Section) then Exit;
+
+  for Control := Low(TJoystickControl) to High(TJoystickControl) do
+    ApplyBinding(Bindings[Control],
+      F.ReadString(Section, JoystickControlNames[Control],
+        BindingToString(Bindings[Control], GamepadKinds)),
+      GamepadKinds);
+end;
+
+class procedure TJoystick.SaveGamepadBindings(F: TIniFile); static;
+var
+  Control: TJoystickControl;
+  Section: String;
+begin
+  { Nothing to file these under, and nothing worth filing: no pad has been
+    here to bind them. }
+  if GamepadProfile.IsEmpty then Exit;
+
+  Section := GamepadSection(GamepadProfile);
+  for Control := Low(TJoystickControl) to High(TJoystickControl) do
+    F.WriteString(Section, JoystickControlNames[Control],
+      BindingToString(Bindings[Control], GamepadKinds));
 end;
 
 function TJoystick.Poll(APort: Word): Byte;
 begin
   Result := 0;
-  FIsGamepadAvailable := GamepadIndex.HasValue
-    and Raylib.IsGamepadAvailable(GamepadIndex.Value);
-end;
-
-function TJoystick.GetKeys: TArray<TKeyboardKey>;
-begin
-  Result := [KeyBindings[jcLeft], KeyBindings[jcRight], KeyBindings[jcUp],
-    KeyBindings[jcDown], KeyBindings[jcFire1], KeyBindings[jcFire2]];
 end;
 
 function TJoystick.GetDown: Boolean;
