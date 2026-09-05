@@ -43,6 +43,39 @@ const
   K12345 = $F7FE;               { 1 2 3 4 5 }
   KSPACE = $7FFE;               { SPACE SYMSHIFT M N B }
 
+  Sprites: array[0..23] of Byte = (
+    %00011000,
+    %00111100,
+    %00011000,
+    %01111110,
+    %10011001,
+    %00111100,
+    %00100100,
+    %01100110,
+
+    %00011000,
+    %00111100,
+    %10011001,
+    %01111110,
+    %00011000,
+    %00111100,
+    %01000010,
+    %11000011,
+
+    %00001000,
+    %00001000,
+    %00001000,
+    %11111111,
+    %10000000,
+    %10000000,
+    %10000000,
+    %11111111    
+  );
+
+  PlayerChars: array[0..1] of Char = (#$90, #$91);  { UDG A-B }
+  WallChar   = #$92;  { UDG C }
+  GemChar    = '*';
+
 var
   Grid: array[1..GridW, 1..GridH] of Byte;
   Seen: array[0..14, 0..9] of Boolean;
@@ -54,6 +87,7 @@ var
   Allow, TimeLeft: Integer;
   StartF: Real;
   Dirty, Quit, Escaped: Boolean;
+  PlayerSpriteIndex: Byte;
 
 (* True while the key selected by mask M in half-row P is held down. *)
 function Held(P, M: Integer): Boolean;
@@ -105,14 +139,14 @@ begin
   T := Grid[X, Y];
   case T of
     TWall: begin
-             TextBackground(Blue); Write(' ');
+             TextBackground(Red); Write(WallChar);
            end;
     TGem:  begin
-             TextBackground(Black); TextColor(Yellow); Write('*');
+             TextBackground(Black); TextColor(Cyan); Write(GemChar);
            end;
     TExit: begin
              if GemLeft = 0 then TextBackground(Green)
-                            else TextBackground(Red);
+                            else TextBackground(Magenta);
              Write(' ');
            end;
     TFloor: begin
@@ -126,7 +160,7 @@ begin
   GotoXY(PX, PY + 1);
   TextBackground(Black);
   TextColor(White);
-  Write('@');
+  Write(PlayerChars[PlayerSpriteIndex]);
 end;
 
 (* Recursive backtracker, done iteratively: the Z80 stack is only 4K,
@@ -218,14 +252,18 @@ begin
       if T <> Last then
       begin
         case T of
-          TWall:  begin TextBackground(Blue); TextColor(Blue) end;
-          TGem:   begin TextBackground(Black); TextColor(Yellow) end;
-          TExit:  begin TextBackground(Red); TextColor(Black) end;
+          TWall:  begin TextBackground(Red); TextColor(Yellow) end;
+          TGem:   begin TextBackground(Black); TextColor(Cyan) end;
+          TExit:  begin TextBackground(Magenta); TextColor(Black) end;
           TFloor: begin TextBackground(Black); TextColor(White) end;
         end;
         Last := T;
       end;
-      if T = TGem then Write('*') else Write(' ');
+      case T of
+        TWall:  Write(WallChar);
+        TGem:   Write(GemChar);
+        TExit, TFloor: Write(' ');
+      end;
     end;
   end;
   PutPlayer;
@@ -252,7 +290,7 @@ begin
 
   GotoXY(3, 7);  TextColor(White);
   Write('Collect every ');
-  TextColor(Yellow); Write('*');
+  TextColor(Yellow); Write(GemChar);
   TextColor(White); Write(' to open the');
   GotoXY(3, 8);  Write('exit, then reach it before');
   GotoXY(3, 9);  Write('the clock runs out.');
@@ -298,6 +336,7 @@ begin
   StartF := Frames;
   Escaped := False;
   Dirty := False;
+  PlayerSpriteIndex := 0;
 
   repeat
     DX := 0;
@@ -336,6 +375,7 @@ begin
         end
         else if (T = TExit) and (GemLeft = 0) then Escaped := True;
 
+        PlayerSpriteIndex := PlayerSpriteIndex xor 1;  { flip between 0 and 1 }
         PutPlayer;
       end;
     end;
@@ -391,6 +431,9 @@ end;
 begin
   Randomize;
   HiScore := 0;
+
+  Mem[23675] := Lo(Addr(Sprites));
+  Mem[23676] := Hi(Addr(Sprites));
 
   repeat
     Title;
