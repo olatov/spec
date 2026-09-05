@@ -1157,7 +1157,7 @@ begin
     if IsGamepadAvailable(I) then
     begin
       TJoystick.GamepadIndex := I;
-      TraceLog(LOG_INFO, PChar($'Gamepad detected: [I] {GetGamepadName(I)}'));
+      TraceLog(LOG_INFO, PChar($'Gamepad detected: [{I}] {GetGamepadName(I)}'));
       Break;
     end;
 
@@ -1594,7 +1594,7 @@ var
   Delta: Double;
 {$if defined (unix) and defined(PLATFORM_DRM)}
   const
-    FlushInterval = 60.0;
+    FlushInterval = 300.0;
   var
     NextFlushTime: Double = FlushInterval;
 {$endif}
