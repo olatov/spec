@@ -1,2 +1,3 @@
 "IMAGE_KEYBOARD"	RCDATA	 "images/keyboard.png"
 "MAIN_FONT"		RCDATA	 "fonts/Fake Receipt.otf"
+"MAIN_ICON"  RCDATA  "images/spec64.png"

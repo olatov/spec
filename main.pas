@@ -41,6 +41,7 @@ type
     { GetTime deadline for a one-shot re-prime of the audio stream after the
       device has warmed up, or 0 when none is pending. See Run. }
     FAudioWarmup: Double;
+    procedure SetIcon;
     function GetMuted: Boolean;
     function GetTapeAutoLoad: Boolean;
     property QuickSaveFilename: String read GetQuickSaveFilename;
@@ -844,6 +845,19 @@ begin
   Result := TVModes[Min(Settings.Display.TVMode, High(TVModes))];
 end;
 
+procedure TApplication.SetIcon;
+var
+  Stream: TResourceStream;
+  Buffer: TImage;
+begin
+{$ifndef PLATFORM_DRM}
+  Stream := autofree TResourceStream.Create(HINSTANCE, 'MAIN_ICON', RT_RCDATA);
+  Buffer := LoadImageFromMemory('.png', Stream.Memory, Stream.Size);
+  SetWindowIcon(Buffer);
+  UnloadImage(Buffer);
+{$endif}
+end;
+
 function TApplication.GetTapeAutoLoad: Boolean;
 begin
   Result := Settings.Tape.AutoLoad;
@@ -955,7 +969,7 @@ begin
   OSD.Lifetime := GetTime + ADuration;
 end;
 
-function LoadLib80: Boolean;
+function LoadLibZ80: Boolean;
 var
   SearchPaths: array of String = ('.', './lib');
   LibZ80Path: String;
@@ -963,6 +977,7 @@ var
 
   function TryLoad(AFileName: String): Boolean;
   begin
+    Result := False;
     try
       TraceLog(LOG_INFO, PChar($'Trying {AFileName}'));
       Result := LoadLibrary(AFileName);
@@ -1000,7 +1015,7 @@ begin
   TraceLog(LOG_INFO, PChar($'Conf file: {Settings.Filename}'));
   TraceLog(LOG_INFO, PChar($'Delay driver: {Settings.DelayDriverToString(Settings.System.DelayDriver)}'));
 
-  if not LoadLib80 then
+  if not LoadLibZ80 then
     raise Exception.Create('Fatal: unable to load Z80 library');
 
   Machine := TZXSpectrum48.Create;
@@ -1011,8 +1026,6 @@ var
   I: Integer;
 begin
   inherited Destroy;
-
-  Settings.Tape.Save := Machine.SaveToWav;
 
   FreeAndNil(Machine);
 
@@ -1120,6 +1133,7 @@ begin
   {$endif}
 
   SetWindowState(FLAG_WINDOW_RESIZABLE);
+  SetIcon;
 
   if Settings.System.DelayDriver = ddVSync then
     SetWindowState(FLAG_VSYNC_HINT)
