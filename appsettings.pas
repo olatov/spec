@@ -16,8 +16,6 @@ type
   );
 
   TAppSettings = class
-  private
-    FDelayDriverMap: TFPGMap<String, TDelayDriver>;
   public
     Filename: String;
     System: record
@@ -63,7 +61,6 @@ type
     function ParseDelayDriver(AValue: String): TDelayDriver;
     function DelayDriverToString(AValue: TDelayDriver): String;
     constructor Create(AFilename: String);
-    destructor Destroy; override;
     procedure Load;
     procedure Save;
   end;
@@ -75,42 +72,27 @@ implementation
 
 function TAppSettings.ParseDelayDriver(AValue: String): TDelayDriver;
 begin
-  if not FDelayDriverMap.TryGetData(AValue.ToUpper, Result) then
+  case AValue.Trim.ToLower of
+    'default', '': Result := ddDefault;
+    'none': Result := ddNone;
+    'vsync': Result := ddVSync;
+  else
     raise Exception.CreateFmt('Invalid DelayDriver value: "%s"', [AValue]);
+  end;
 end;
 
 function TAppSettings.DelayDriverToString(AValue: TDelayDriver): String;
-var
-  I: Integer;
 begin
-  Result := '';
-
-  for I := 0 to FDelayDriverMap.Count - 1 do
-  begin
-    if FDelayDriverMap.Data[I] = AValue then Result := FDelayDriverMap.Keys[I];
-    if not Result.IsEmpty then Exit;
+  case AValue of
+    ddDefault: Result := 'Default';
+    ddNone: Result := 'None';
+    ddVSync: Result := 'VSync';
   end;
-  Result := '?';
 end;
 
 constructor TAppSettings.Create(AFilename: String);
 begin
   Filename := AFilename;
-
-  FDelayDriverMap := TFPGMap<String, TDelayDriver>.Create;
-  with FDelayDriverMap do
-  begin
-    Add('', ddDefault);
-    Add('DEFAULT', ddDefault);
-    Add('NONE', ddNone);
-    Add('VSYNC', ddVSync);
-  end;
-end;
-
-destructor TAppSettings.Destroy;
-begin
-  FreeAndNil(FDelayDriverMap);
-  inherited Destroy;
 end;
 
 procedure TAppSettings.Load;
@@ -121,7 +103,8 @@ begin
 
   with System do
   begin
-    DelayDriver := ParseDelayDriver(F.ReadString('System', 'DelayDriver', 'default'));
+    DelayDriver := ParseDelayDriver(F.ReadString('System', 'DelayDriver',
+      {$ifdef PLATFORM_DRM} 'None' {$else} 'Default' {$endif}));
     LogLevel := F.ReadInteger('System', 'LogLevel', LOG_ERROR);
   end;
 
