@@ -131,6 +131,10 @@
         <UnitName Value="Keyboards"/>
       </Unit>
       <Unit>
+        <Filename Value="inputs.pas"/>
+        <UnitName Value="Inputs"/>
+      </Unit>
+      <Unit>
         <Filename Value="joysticks.pas"/>
         <UnitName Value="Joysticks"/>
       </Unit>
