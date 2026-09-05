@@ -193,7 +193,7 @@ implementation
 
 {$if defined(unix) and defined(PLATFORM_DRM)}
 uses
-  BaseUnix, Termio;
+  Termio;
 {$endif}
 
 {$R main.rc}
@@ -449,11 +449,10 @@ begin
 end;
 
 { AEmuDone/ABlitDone/AFrameDone are GetTime readings taken at the end of each
-  stage of RunFrame. "present" covers EndDrawing, so it also carries raylib's
-  own wait whenever SetTargetFPS is doing the pacing - a large figure there is
-  normal in that case, and only the residue of the swap when the frame limiter
-  lives in the caller's loop instead. The number that must stay at 20 ms either
-  way is "period", the wall time between the starts of consecutive frames. }
+  stage of RunFrame. "present" covers EndDrawing, which paces nothing here -
+  CORE.Time.target is left at zero - so it is the swap alone, plus the wait
+  for vblank under ddVSync. The number that must stay at 20 ms either way is
+  "period", the wall time between the starts of consecutive frames. }
 procedure StatsFrame(AStart, AEmuDone, ABlitDone, AFrameDone: Double; AIdle: Boolean);
 begin
   if not Settings.Audio.Stats then Exit;
@@ -1111,16 +1110,19 @@ begin
     calls eglSwapInterval, so ClearWindowState(FLAG_VSYNC_HINT) below is a
     no-op there and every page flip waits for the connector's real vblank.
     Worse, InitWindow's DRM backend picks its connector mode by asking for
-    CORE.Time.target's fps (falling back to 60 if it is still unset) - so if
-    SetTargetFPS runs after InitWindow, as it would below, the mode search
-    already ran against a 60 Hz target and a 60 Hz mode gets locked in even
-    when the display has a 50 Hz mode at the same resolution. That mismatch
-    beats a hard 60 Hz vblank against this 50 Hz emulator's frame clock: some
-    frames take one flip, some take two, RunFrame's single video-frame's
-    worth of audio comes out at whatever that ends up averaging to rather
-    than 44100 Hz, and the stream underruns on the difference.
-    Therefore, for DRM, SetTargetFPS has to be set before InitWindow,
-    and can be reset afterwards }
+    CORE.Time.target's fps (falling back to 60 if it is still unset), so a
+    target set only after InitWindow comes too late: the mode search has
+    already run against 60 Hz and a 60 Hz mode gets locked in even when the
+    display has a 50 Hz mode at the same resolution. That mismatch beats a
+    hard 60 Hz vblank against this 50 Hz emulator's frame clock: some frames
+    take one flip, some take two, RunFrame's single video-frame's worth of
+    audio comes out at whatever that ends up averaging to rather than
+    44100 Hz, and the stream underruns on the difference.
+
+    So the target goes in ahead of InitWindow, where the mode search can see
+    it, and straight back to zero after. The reset is not optional: a target
+    left standing puts EndDrawing back in charge of the pacing, which is the
+    thing Run's own schedule exists to keep it out of. }
 
   {$ifdef PLATFORM_DRM}
     SetTargetFPS(FPS);
@@ -1652,11 +1654,26 @@ begin
     RunFrame;
 
     {$if defined(unix) and defined(PLATFORM_DRM)}
+      { On the DRM console the keys pressed here also pile up in the tty's own
+        input queue, where nothing reads them and they would spill into the
+        shell on the way out, so drain it periodically and once at the end. }
       if (Machine.Frames mod (FPS * 30)) = 0 then
-        TCFlushlush(StdInputHandle, TCIFLUSH);;
+        TCFlush(StdInputHandle, TCIFLUSH);
     {$endif}
 
     if Turbo or (Settings.System.DelayDriver in [ddNone, ddVSync]) then Continue;
+
+    { raylib's own limiter is no use here. EndDrawing waits out whatever is
+      left of the target after that one frame's work - rcore.c does
+      WaitTime(target - update - draw) - so it measures against the frame and
+      never against a running schedule, and an overshoot is kept rather than
+      made up. On macOS the overshoot is large, WaitTime ending in a usleep
+      whose 5% busy-wait reserve does not begin to cover it, and the few per
+      cent of drift that follows is invisible as video and fatal as audio:
+      the emulator produces samples slower than the device consumes them
+      until the stream runs dry. Pacing against an absolute schedule instead
+      cancels a constant overshoot outright, which is why WaitTime is a fine
+      primitive to sleep with and a poor one to be paced by. }
 
     FrameTime := FrameTime + (1 / FPS);
 
@@ -1677,8 +1694,7 @@ begin
   StopAudioStream(AudioStream);
 
   {$if defined(unix) and defined(PLATFORM_DRM)}
-    if (Machine.Frames mod (FPS * 30)) = 0 then
-      TCFlushlush(StdInputHandle, TCIFLUSH);
+    TCFlush(StdInputHandle, TCIFLUSH);
   {$endif}
 end;
 

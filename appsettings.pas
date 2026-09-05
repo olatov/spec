@@ -10,7 +10,7 @@ uses
 
 type
   TDelayDriver = (
-    ddNone = 0,  { No delay beteen frames, unless forced externally by the OS/platform }
+    ddNone = 0,  { No delay between frames, unless forced externally by the OS/platform }
     ddDefault,  { Raylib's WaitTime, no VSync }
     ddVSync  { VSync only; will produce incorrect timings unless the screen is locked at 50Hz }
   );
@@ -102,6 +102,7 @@ begin
   begin
     Add('', ddDefault);
     Add('DEFAULT', ddDefault);
+    Add('NONE', ddNone);
     Add('VSYNC', ddVSync);
   end;
 end;
