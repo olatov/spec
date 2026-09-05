@@ -1,0 +1,20 @@
+Function key reference
+=======================
+
+F1            Open the emulator menu (also opens via a gamepad's Menu button).
+F2            Quick-save the current machine state.
+F3            Quick-load the last quick-saved state.
+F5            Play/pause the loaded .WAV tape (only while a tape is loaded).
+F6            Cycle to the next joystick emulation mode.
+F7            Decrease volume; hold Shift to decrease overscan instead.
+F8            Increase volume; hold Shift to increase overscan instead.
+F9            Toggle the on-screen keyboard overlay.
+F10           Toggle fullscreen.
+F11           Switch TV-set/display mode.
+
+Other keys
+----------
+Tab           Jump straight to the catalog (skips the menu's top page).
+Esc           Press once to arm quit, press again within 2s to quit.
+` (grave)     Hold for turbo (fast-forward) mode.
+Scroll Lock   Save a screenshot PNG of the current display.
