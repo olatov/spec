@@ -145,7 +145,7 @@
       </Unit>
       <Unit>
         <Filename Value="appsettings.pas"/>
-        <UnitName Value="nit"/>
+        <UnitName Value="AppSettings"/>
       </Unit>
     </Units>
   </ProjectOptions>

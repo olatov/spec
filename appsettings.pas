@@ -9,8 +9,11 @@ uses
   Raylib;
 
 type
-  TDelayDriver = (ddNone = 0, ddDefault, ddRaylib,
-    ddSDL3DelayNS, ddSDL3DelayPrecise, ddSleep, ddVSync);
+  TDelayDriver = (
+    ddNone = 0,  { No delay beteen frames, unless forced externally by the OS/platform }
+    ddDefault,  { Raylib's WaitTime, no VSync }
+    ddVSync  { VSync only; will produce incorrect timings unless the screen is locked at 50Hz }
+  );
 
   TAppSettings = class
   private
@@ -98,12 +101,7 @@ begin
   with FDelayDriverMap do
   begin
     Add('', ddDefault);
-    Add('NONE', ddNone);
     Add('DEFAULT', ddDefault);
-    Add('RAYLIB', ddRaylib);
-    Add('SDL3DELAYNS', ddSDL3DelayNS);
-    Add('SDL3DELAYPRECISE', ddSDL3DelayPrecise);
-    Add('SLEEP', ddSleep);
     Add('VSYNC', ddVSync);
   end;
 end;

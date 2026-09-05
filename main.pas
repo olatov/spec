@@ -191,6 +191,11 @@ var
 
 implementation
 
+{$if defined(unix) and defined(PLATFORM_DRM)}
+uses
+  BaseUnix, Termio;
+{$endif}
+
 {$R main.rc}
 
 procedure SetOSD(AText: String; ADuration: Double = 2); forward;
@@ -976,6 +981,7 @@ var
   end;
 
 begin
+  Result := False;
   LibZ80Path := GetEnvironmentVariable('LIBZ80_PATH');
   if not LibZ80Path.IsEmpty then
   begin
@@ -1112,12 +1118,19 @@ begin
     beats a hard 60 Hz vblank against this 50 Hz emulator's frame clock: some
     frames take one flip, some take two, RunFrame's single video-frame's
     worth of audio comes out at whatever that ends up averaging to rather
-    than 44100 Hz, and the stream underruns on the difference. So set the
-    target before InitWindow on every platform - SetTargetFPS only ever
-    touches CORE.Time.target and is safe to call this early - and DRM's mode
-    search then has a chance to match the emulator's own rate. }
+    than 44100 Hz, and the stream underruns on the difference.
+    Therefore, for DRM, SetTargetFPS has to be set before InitWindow,
+    and can be reset afterwards }
+
+  {$ifdef PLATFORM_DRM}
+    SetTargetFPS(FPS);
+  {$endif}
 
   InitWindow(Settings.Window.Width, Settings.Window.Height, 'Spec');
+
+  {$ifdef PLATFORM_DRM}
+    SetTargetFPS(0);
+  {$endif}
 
   SetWindowState(FLAG_WINDOW_RESIZABLE);
 
@@ -1145,6 +1158,7 @@ begin
     if IsGamepadAvailable(I) then
     begin
       TJoystick.GamepadIndex := I;
+      TraceLog(LOG_INFO, PChar($'Gamepad detected: [I] {GetGamepadName(I)}'));
       Break;
     end;
 
@@ -1577,7 +1591,8 @@ procedure TApplication.Run;
 var
   Error: String;
   Requested: Boolean;
-  FrameTime, Delta: Double;
+  FrameTime: Double = 0;
+  Delta: Double;
 begin
   Machine.Power := True;
 
@@ -1620,7 +1635,7 @@ begin
 
   SetExitKey(KEY_NULL);
 
-  if Settings.System.DelayDriver in [ddDefault, ddRaylib, ddSDL3DelayNS, ddSDL3DelayPrecise, ddSleep] then
+  if Settings.System.DelayDriver = ddDefault then
     FrameTime := GetTime;
 
   while not (WindowShouldClose or QuitRequested) do
@@ -1635,50 +1650,36 @@ begin
     end;
 
     RunFrame;
-    if Turbo then Continue;
 
-    if Settings.System.DelayDriver in [ddDefault, ddRaylib, ddSDL3DelayNS, ddSDL3DelayPrecise, ddSleep] then
-    begin
-      {
-        raylib paces frames by waiting out whatever is left of the target period
-        after the frame's own work - rcore.c does WaitTime(target - update - draw)
-        - which is measured against that one frame and never against a running
-        schedule, so however far the wait overshoots is kept rather than made up.
-        On macOS that wait ends in usleep() with a 5% busy-wait reserve, around
-        0.8 ms of a 16.5 ms wait, and macOS overshoots that often enough to matter:
-        frames come out at 20.13 ms instead of 20.00.
+    {$if defined(unix) and defined(PLATFORM_DRM)}
+      if (Machine.Frames mod (FPS * 30)) = 0 then
+        TCFlushlush(StdInputHandle, TCIFLUSH);;
+    {$endif}
 
-        A 0.7% shortfall is invisible as video and fatal as audio. The emulator
-        ends up generating about 43,800 samples a second for a device consuming
-        44,100, so the stream's two 100 ms buffers run dry some twelve seconds in,
-        and from then on every chunk arrives into a device that has already played
-        silence - a click, ten times a second, for the rest of the session. Linux
-        takes WaitTime's nanosleep branch instead, whose overshoot stays inside the
-        reserve, which is why none of this shows up there.
+    if Turbo or (Settings.System.DelayDriver in [ddNone, ddVSync]) then Continue;
 
-        Run's loop below keeps an absolute schedule of its own instead, so a frame
-        that overshoots is made up by the next one rather than by every one after
-        it, and NanoSleep replaces the frame limiter.
-      }
+    FrameTime := FrameTime + (1 / FPS);
 
-      FrameTime := FrameTime + (1 / FPS);
+    { The schedule is absolute, so a frame that overshoots is made up by the
+      next one rather than pushing every later frame back - that is what
+      keeps the emulator's sample clock in step with the audio device. A long
+      stall (dragging the window, a modal browser, a slow load) leaves the
+      schedule far enough behind that making it up means running uncapped
+      until it catches up: video at several times speed, and samples produced
+      faster than the device drains them until the stream overflows. Past a
+      whole frame of debt, write it off and start again from now. }
+    if GetTime - FrameTime > (1 / FPS) then FrameTime := GetTime;
 
-      { The schedule is absolute, so a frame that overshoots is made up by the
-        next one rather than pushing every later frame back - that is what
-        keeps the emulator's sample clock in step with the audio device. A long
-        stall (dragging the window, a modal browser, a slow load) leaves the
-        schedule far enough behind that making it up means running uncapped
-        until it catches up: video at several times speed, and samples produced
-        faster than the device drains them until the stream overflows. Past a
-        whole frame of debt, write it off and start again from now. }
-      if GetTime - FrameTime > (1 / FPS) then FrameTime := GetTime;
-
-      Delta := (1 / FPS) - GetTime + FrameTime;
-      if Delta > 0 then Delay(Delta);
-    end;
+    Delta := (1 / FPS) - GetTime + FrameTime;
+    if Delta > 0 then Delay(Delta);
   end;
 
   StopAudioStream(AudioStream);
+
+  {$if defined(unix) and defined(PLATFORM_DRM)}
+    if (Machine.Frames mod (FPS * 30)) = 0 then
+      TCFlushlush(StdInputHandle, TCIFLUSH);
+  {$endif}
 end;
 
 procedure TApplication.HandleInput;
@@ -1869,7 +1870,8 @@ end;
 procedure TApplication.RenderAudioFrame;
 var
   Accepted, Starved: Boolean;
-  Started, Updated: Double;
+  Started: Double = 0;
+  Updated: Double = 0;
 begin
   AdvanceAudio(TStatesPerFrame);
   PrevTiming := 0;
