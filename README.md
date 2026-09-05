@@ -6,9 +6,9 @@ Raspberry Pi — including bare DRM/KMS on the Pi with no desktop, so it turns
 straight into a full-screen Spectrum.
 
 <p align="center">
-  <img src="images/screenshot000.png" alt="Sinclair BASIC" width="32%">
-  <img src="images/screenshot001.png" alt="Dizzy II" width="32%">
-  <img src="images/screenshot002.png" alt="Exolon" width="32%">
+  <img src="contrib/screenshot000.png" alt="Sinclair BASIC" width="32%">
+  <img src="contrib/screenshot001.png" alt="Dizzy II" width="32%">
+  <img src="contrib/screenshot002.png" alt="Exolon" width="32%">
 </p>
 
 ## Features
