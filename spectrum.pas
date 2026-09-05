@@ -327,8 +327,14 @@ begin
         Result := Result and not Byte(EarBit);
   end;
 
-  if not AAddress.Bits[5] and (Joystick is TKempstonJoystick) then
-    Result := Result and TKempstonJoystick(Joystick).Poll(AAddress);
+  if not AAddress.Bits[5] then
+    if Joystick is TKempstonJoystick then
+      Result := Result and TKempstonJoystick(Joystick).Poll(AAddress)
+    else
+      { Pull down Kempston bits to prevent games going crazy
+        while polling an absent joystick.
+        Revise if another device needs to be added on an odd-numbered port. }
+      Result := Result and $C0;
 end;
 
 procedure TZXSpectrum48.OnIOWrite(AAddress: Word; AValue: Byte); inline;
