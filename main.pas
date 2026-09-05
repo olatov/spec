@@ -422,8 +422,6 @@ begin
     TraceLog(LOG_DEBUG, PChar('                  (idle frames were paused or muted - no audio was ' +
       'generated in them, so the rates above understate generation)'));
 
-  Flush(Output);
-
   Stats.MarkTime := Now;
   Stats.MarkPushed := Stats.ChunksPushed;
   Stats.MarkDropped := Stats.ChunksDropped;
@@ -1595,6 +1593,12 @@ var
   Requested: Boolean;
   FrameTime: Double = 0;
   Delta: Double;
+{$if defined (unix) and defined(PLATFORM_DRM)}
+  const
+    FlushInterval = 60.0;
+  var
+    NextFlushTime: Double = FlushInterval;
+{$endif}
 begin
   Machine.Power := True;
 
@@ -1657,8 +1661,11 @@ begin
       { On the DRM console the keys pressed here also pile up in the tty's own
         input queue, where nothing reads them and they would spill into the
         shell on the way out, so drain it periodically and once at the end. }
-      if (Machine.Frames mod (FPS * 30)) = 0 then
+      if GetTime > NextFlushTime then
+      begin
         TCFlush(StdInputHandle, TCIFLUSH);
+        NextFlushTime := GetTime + FlushInterval;
+      end;
     {$endif}
 
     if Turbo or (Settings.System.DelayDriver in [ddNone, ddVSync]) then Continue;
