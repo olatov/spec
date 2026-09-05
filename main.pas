@@ -76,7 +76,6 @@ type
   public
     Machine: TZXSpectrum48;
     AudioStream: TAudioStream;
-    AudioVolume: Single;
     Target: TRenderTexture2D;
     Font: TFont;
     KeyboardTexture: TTexture2D;
@@ -1216,8 +1215,8 @@ end;
 
 procedure TApplication.SetVolume(AVolume: Single; K: Single = 4);
 begin
-  AudioVolume := EnsureRange(AVolume, 0, 1.0);
-  SetAudioStreamVolume(AudioStream, (Exp(K * AudioVolume) - 1) / (Exp(K) - 1));
+  Settings.Audio.Volume := EnsureRange(AVolume, 0, 1.0);
+  SetAudioStreamVolume(AudioStream, (Exp(K * Settings.Audio.Volume) - 1) / (Exp(K) - 1));
 end;
 
 procedure TApplication.RunFrame;
@@ -1769,8 +1768,8 @@ begin
       SetOSD($'Overscan: {Settings.Display.Overscan}');
     end else
     begin
-      SetVolume(AudioVolume + IfThen(IsKeyPressed(KEY_F7), -0.05, 0.05));
-      SetOsd($'Volume: {AudioVolume * 100:%.0f}');
+      SetVolume(Settings.Audio.Volume + IfThen(IsKeyPressed(KEY_F7), -0.05, 0.05));
+      SetOsd($'Volume: {Settings.Audio.Volume * 100:%.0f}');
     end;
   end;
 
