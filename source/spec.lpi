@@ -144,10 +144,6 @@
     </Linking>
     <Other>
       <CustomOptions Value="-FF"/>
-      <OtherDefines Count="2">
-        <Define0 Value="EMBED_CATALOG"/>
-        <Define1 Value="PLATFORM_DRM"/>
-      </OtherDefines>
     </Other>
   </CompilerOptions>
   <Debugging>

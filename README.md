@@ -53,6 +53,42 @@ This is a focused 48K emulator. It deliberately leaves out:
 - **Other snapshot/tape formats** — no `.sna`, `.szx`, `.tzx`, or `.rzx`; loading
   is limited to `.z80`, `.tap` and `.wav`.
 
+## First run: unsigned builds
+
+The binaries are **not code-signed or notarized**, so Windows and macOS will
+refuse to launch them until you say otherwise. Nothing is wrong with the
+download — the operating system simply has no certificate to check it against.
+If you would rather not bypass the warning, [build from source](#building)
+instead; a binary you compile yourself is not quarantined.
+
+### macOS
+
+Gatekeeper reports *"Apple could not verify 'spec' is free of malware"* and
+offers only **Move to Trash**. Solution:
+
+- **Strip the quarantine flag**:
+
+  ```sh
+  xattr -dr com.apple.quarantine spec libZ80.dylib
+  ```
+
+### Windows
+
+SmartScreen shows *"Windows protected your PC"*. Click **More info → Run
+anyway**. If the executable came out of a ZIP, Windows may also mark it as
+blocked; clear that with either:
+
+- **File Properties** — right-click `spec.exe` → **Properties** → tick
+  **Unblock** at the bottom of the **General** tab → **OK**.
+- **PowerShell**:
+
+  ```powershell
+  Unblock-File .\spec.exe
+  ```
+
+Some antivirus products flag unsigned Pascal/raylib executables as unknown
+rather than malicious; you may need to add an exclusion for the folder.
+
 ## Controls
 
 ### Function keys
@@ -79,6 +115,9 @@ This is a focused 48K emulator. It deliberately leaves out:
 | `` ` `` (grave) | Hold for turbo (fast-forward) |
 | `Scroll Lock` | Save a screenshot PNG of the current display |
 
+Saved files land in the folder described under [Where files are
+written](#where-files-are-written).
+
 ## Getting the games
 
 No games or tape images ship with the emulator. Drop `.z80`, `.tap` or `.wav`
@@ -96,10 +135,26 @@ Batty,batty.tap
 Put each `file` in the same folder. An optional screenshot with the same base
 name (`arkanoid.png`) is shown in the preview pane.
 
+## Where files are written
+
+Snapshots, taped programs, screenshots and `spec.conf` all go to the same
+folder:
+
+| Platform | Folder |
+| --- | --- |
+| Windows, Linux | The folder the emulator was started from |
+| macOS | `~/Library/Application Support/spec/` |
+
+macOS is the odd one out because Finder launches an `.app` with the root of
+the disk as its working directory, and writing next to the bundle would break
+the signature it was sealed with. Setting `SPEC_DATA_DIR` overrides the choice
+everywhere, and `[Files] SavePath` moves the snapshots (and with them the
+screenshots and taped programs) somewhere else again.
+
 ## Configuration
 
-Settings live in `spec.conf` (INI format) next to the binary and are written
-back when you change them in the menu. Notable sections:
+Settings live in `spec.conf` (INI format) — see the table above for where —
+and are written back when you change them in the menu. Notable sections:
 
 ```ini
 [Window]
@@ -137,7 +192,7 @@ Fire 1=pad:FACE_DOWN
 
 ### Desktop (Windows / Linux / macOS)
 
-Open `spec.lpi` in Lazarus and build the **Release** mode, or from the command
+Open `spec.lpi` in Lazarus (Unleashed IDE) and build the **Release** mode, or from the command
 line:
 
 ```sh
@@ -145,7 +200,26 @@ lazbuild --build-mode=Release spec.lpi
 ```
 
 The native `Z80` shared library for your platform is in `lib/`
-(`libZ80.so`, `Z80.dll`, `libZ80.dylib`); keep it next to the executable.
+(`libZ80.so`, `Z80.dll`, `libZ80.dylib`). It is not linked in — the emulator
+opens it at runtime — and it is looked for, in order, at `$LIBZ80_PATH`, then
+`./` and `./lib/` relative to the working directory, then the same two next to
+the executable, and on macOS in the bundle's `Contents/Frameworks/`. Keeping it
+beside the executable covers every case.
+
+### macOS app bundle
+
+`source/macos-bundle.sh` builds both architectures, joins them with `lipo`,
+and assembles `spec.app` with the dylib in `Contents/Frameworks/` — the one
+place codesign will seal as nested code:
+
+```sh
+./macos-bundle.sh                 # ad-hoc signed
+SIGN_ID="Developer ID Application: Your Name (TEAMID)" ./macos-bundle.sh
+```
+
+Pass `--no-compile` to re-assemble from the binaries already built. The ROM,
+shaders and fonts are compiled into the executable, so the dylib is the only
+file the bundle has to carry.
 
 ## Project layout
 
@@ -157,8 +231,10 @@ The native `Z80` shared library for your platform is in `lib/`
 | `keyboards.pas` / `joysticks.pas` / `inputs.pas` | Input handling and mapping |
 | `osdmenu.pas` / `catalogs.pas` | On-screen menu and game catalog |
 | `appsettings.pas` | `spec.conf` reader/writer |
+| `utils.pas` | Platform odds and ends, including where the emulator writes |
 | `shaders/` | GLSL fragment shaders for the display modes |
 | `rom/48.rom` | Spectrum 48K ROM |
+| `macos-bundle.sh` | Assembles and signs `spec.app` |
 
 ## Licensing
 

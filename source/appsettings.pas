@@ -5,8 +5,8 @@ unit AppSettings;
 interface
 
 uses
-  Classes, SysUtils, IniFiles, FGL,
-  Raylib, Joysticks;
+  Classes, SysUtils, IniFiles, FGL, System.IOUtils,
+  Raylib, Utils, Joysticks;
 
 type
   TDelayDriver = (
@@ -251,7 +251,7 @@ begin
 end;
 
 initialization
-  Settings := TAppSettings.Create('spec.conf');
+  Settings := TAppSettings.Create(TPath.Combine(UserDataDir, 'spec.conf'));
   Settings.Load;
 
 finalization

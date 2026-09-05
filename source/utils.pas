@@ -10,12 +10,49 @@ uses
 var
   Delay: procedure(ASecs: Double); cdecl; = @Raylib.WaitTime;
 
+{ Where the emulator writes: spec.conf, snapshots, taped programs and
+  screenshots, unless [Files] SavePath sends the snapshots elsewhere.
+
+  On Windows and Linux that is the folder it was started from, which is what
+  makes a copied folder a self-contained install. macOS gives an .app no such
+  folder: Finder launches it with the root directory as its working directory,
+  and writing beside the bundle would break the signature it was sealed with,
+  so the writes go where the system keeps a user's per-application files.
+  SPEC_DATA_DIR overrides both. }
+function UserDataDir: String;
+
 implementation
 
-{$ifdef mswindows}
 uses
-  Windows;
+  SysUtils, System.IOUtils
+  {$ifdef mswindows}, Windows{$endif};
 
+var
+  { Settled once: the answer cannot change while the emulator runs, and the
+    menu asks for it often enough that a stat per frame would be a waste. }
+  FUserDataDir: String = '';
+
+function UserDataDir: String;
+begin
+  if not FUserDataDir.IsEmpty then Exit(FUserDataDir);
+
+  FUserDataDir := GetEnvironmentVariable('SPEC_DATA_DIR');
+
+  {$ifdef darwin}
+  if FUserDataDir.IsEmpty then
+    FUserDataDir := TPath.Combine(GetEnvironmentVariable('HOME'),
+      'Library/Application Support/spec');
+  {$endif}
+
+  { Nothing to fall back on but the working directory - which is what the
+    other platforms use anyway, and is at least always there. }
+  if FUserDataDir.IsEmpty or not ForceDirectories(FUserDataDir) then
+    FUserDataDir := GetCurrentDir;
+
+  Result := FUserDataDir;
+end;
+
+{$ifdef mswindows}
 const
   { None of these are in FPC's Windows unit. ProcessPowerThrottling is the
     fifth member of PROCESS_INFORMATION_CLASS; the flag values are the ones

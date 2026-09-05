@@ -60,6 +60,7 @@ type
     function QuickLoad: Boolean;
     procedure QuickSave;
     function SaveDir: String;
+    function BrowseDir: String;
     function SnapshotFiles: TStringArray;
     function ResolveSaveName(const AName: String): String;
     function DefaultSaveName: String;
@@ -505,13 +506,32 @@ begin
   Machine.SaveZ80(QuickSaveFilename);
 end;
 
-{ Where named snapshots live. An unset [Files] SavePath means "next to the
-  emulator", i.e. wherever it was started from. }
+{ Where named snapshots, taped programs and screenshots live. An unset
+  [Files] SavePath means the folder the emulator writes to by default - see
+  UserDataDir, which is where the emulator was started from everywhere but
+  macOS. }
 function TApplication.SaveDir: String;
 begin
   Result := if Settings.Files.SavePath.IsEmpty
-    then GetCurrentDir
+    then UserDataDir
     else Settings.Files.SavePath;
+end;
+
+{ Where the file browser opens. It reopens wherever it was left, and with
+  nothing remembered that is the folder the emulator was started from - which
+  is where the games are, when it was started from one. }
+function TApplication.BrowseDir: String;
+begin
+  Result := Settings.Files.BrowsePath;
+  if not Result.IsEmpty then Exit;
+
+  Result := GetCurrentDir;
+
+  {$ifdef darwin}
+  { Except under Finder, which starts an .app at the root of the disk and
+    would leave the player several levels from anything of their own. }
+  if Result = PathDelim then Result := GetEnvironmentVariable('HOME');
+  {$endif}
 end;
 
 { Bare names of the snapshots already in SaveDir, sorted. }
@@ -837,7 +857,7 @@ begin
     then 'spec'
     else TPath.GetFileNameWithoutExtension(CurrentFile);
 
-  Result := TPath.Combine(Settings.Files.SavePath, Result + '_quicksave.z80');
+  Result := TPath.Combine(SaveDir, Result + '_quicksave.z80');
 end;
 
 function TApplication.GetTVMode: TTVMode;
@@ -915,7 +935,7 @@ end;
 
 procedure TApplication.TapeSaved(const AFilename: String);
 begin
-  SetOSD($'Saved to {AFilename}', 4);
+  SetOSD($'Saved to {TPath.GetFileName(AFilename)}', 4);
 end;
 
 procedure AutoKeyEvent(EventType: LongWord; Key: TKeyboardKey);
@@ -971,9 +991,12 @@ end;
 
 function LoadLibZ80: Boolean;
 var
+  { The folder the emulator was started from comes first, so a library dropped
+    beside a shortcut still wins; AppDir entries are appended below. }
   SearchPaths: array of String = ('.', './lib');
   LibZ80Path: String;
   SearchPath: String;
+  AppDir: String;
 
   function TryLoad(AFileName: String): Boolean;
   begin
@@ -999,6 +1022,18 @@ begin
     Result := TryLoad(LibZ80Path);
     Exit;
   end;
+
+  { Launched from a shortcut - or from Finder, which hands an .app the root
+    directory - the working directory is nowhere near the library, so the same
+    two places are tried again relative to the binary itself. A macOS bundle
+    keeps its dylibs in Contents/Frameworks, one level up from Contents/MacOS,
+    which is where codesign and notarization expect nested code to be. }
+  AppDir := GetApplicationDirectory;
+  Insert(AppDir, SearchPaths, Integer.MaxValue);
+  Insert(TPath.Combine(AppDir, 'lib'), SearchPaths, Integer.MaxValue);
+  {$ifdef darwin}
+  Insert(TPath.Combine(AppDir, '../Frameworks'), SearchPaths, Integer.MaxValue);
+  {$endif}
 
   for SearchPath in SearchPaths do
   begin
@@ -1148,6 +1183,7 @@ begin
   Font := Self.LoadFont;
 
   Machine.OnTapeSaved := @TapeSaved;
+  Machine.SaveFolder := SaveDir;
 
   Machine.Keyboard.CapsShiftKeys := [Settings.Keyboard.CapsShiftKey];
   Machine.Keyboard.SymbolShiftKeys := [Settings.Keyboard.SymbolShiftKey];
@@ -1411,7 +1447,7 @@ begin
             Sender.Parent.Warning := Error;
         end);
 
-  Result.Root.AddBrowser('Load', Settings.Files.BrowsePath,
+  Result.Root.AddBrowser('Load', BrowseDir,
     procedure(Sender: TFileMenuItem)
     begin
       BrowseFiles(Sender);
@@ -1749,12 +1785,13 @@ begin
     if Filename.IsEmpty then Filename := 'screen';
     FullFilename := Filename + '.png';
     I := 0;
-    while TFile.Exists(FullFilename) and (I < 100) do
+    while TFile.Exists(TPath.Combine(SaveDir, FullFilename)) and (I < 100) do
     begin
       Inc(I);
       FullFilename := $'{Filename}_{I}.png';
     end;
-    ExportImage(Image, PChar(FullFilename));
+    ExportImage(Image, PChar(TPath.Combine(SaveDir, FullFilename)));
+    { The bare name, not the path - SaveDir can be far too long for the OSD. }
     SetOSD(PChar('Saved ' + FullFilename));
   end;
 

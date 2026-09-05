@@ -109,6 +109,9 @@ type
     JoystickIndex: Integer;
     AdvanceAudio: TAdvanceAudioNotify;
     OnTapeSaved: TTapeSavedNotify;
+    { Folder a SAVE lands in. The machine has no opinion on where that is -
+      the application sets it - so an empty one means the working directory. }
+    SaveFolder: String;
     BorderChange: TBorderChangeNotify;
     property Joystick: TJoystick read GetJoystick;
     property JoystickName: String read GetJoystickName;
@@ -1113,6 +1116,7 @@ var
   N: Integer;
 begin
   Base := if FSaveName <> '' then FSaveName else 'spec-save';
+  Base := TPath.Combine(SaveFolder, Base);
   Result := Base + '.wav';
 
   N := 1;
