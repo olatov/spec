@@ -168,7 +168,7 @@ end;
 
 function TJoystick.GetName: String;
 begin
-
+  Result := 'Joystick';
 end;
 
 function TJoystick.GetRight: Boolean;
