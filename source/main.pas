@@ -1027,6 +1027,9 @@ var
 begin
   inherited Destroy;
 
+  if Assigned(Machine) then
+    Settings.Joystick.Index := Machine.JoystickIndex;
+
   FreeAndNil(Machine);
 
   if Settings.Audio.Stats then StatsShutdown;
