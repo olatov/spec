@@ -1,0 +1,7 @@
+CATALOG	RCDATA	catalog.csv
+"GAME_basic.z80" RCDATA "basic.z80"
+"PICTURE_basic.z80" RCDATA "basic.png"
+"GAME_anaconda.wav" RCDATA "anaconda.wav"
+"PICTURE_anaconda.wav" RCDATA "anaconda.png"
+"GAME_maze.tap" RCDATA "maze.tap"
+"PICTURE_maze.tap" RCDATA "maze.png"

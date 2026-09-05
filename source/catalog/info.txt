@@ -1,0 +1,1 @@
+Note: catalog.rc is only necessary when embedding the catalog into the emulator executable (-dEMBED_CATALOG on the compilation command).

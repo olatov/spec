@@ -11,9 +11,12 @@
 *.compiled
 *.z80
 *.tap
+source/spec
+!contrib/*.tap
+!contrib/*.z80
+!contrib/*.wav
 *.tzx
 *.TAP
 *.wav
 /spec
 catalog/
-/*.png
