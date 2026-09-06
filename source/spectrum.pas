@@ -70,6 +70,7 @@ type
     FSaveLastEdgeFrame: QWord;
     FSaveName: String;
     procedure ArmSave;
+    procedure Contention;
     function GetJoystick: TJoystick;
     function GetJoystickName: String;
     function LoadFromWave(const Wave: TWave): Boolean;
@@ -178,6 +179,21 @@ type
 implementation
 
 const
+  { Raster geometry in the machine's own frame clock, where T-state 0 is the
+    start of scanline 0 (BeginFrame). The video code maps frame T-state
+    Line * ScanlineTStates onto the first display pixel of that line - see
+    PaintBorderUntil and ScreenTop in main.pas - so the ULA's screen fetches
+    and everything timed against them live on these numbers, not on the
+    interrupt-relative ones the literature quotes. }
+  ScanlineTStates = 224;
+  TotalScanlines = 312;
+  FirstScreenLine = 48;
+  ScreenLines = 192;
+  { 256 pixels at the ULA's two pixels per T-state. The line's remaining 96
+    T-states are right border, blanking and the next line's left border, none
+    of which need the bus. }
+  DisplayTStates = 128;
+
   { Entry points of the 48K ROM's tape routines. }
   LDBytesAddress = $0556;
   SABytesAddress = $04C2;
@@ -295,19 +311,52 @@ begin
   z80_power(@CPU, AValue);
 end;
 
+{ ULA memory contention. While the ULA is fetching a screen line it owns the
+  bus for the first 128 T-states of that line, and a CPU access to $4000-$7FFF
+  landing in that window is stalled until the ULA next lets go - which it does
+  every 8 T-states, hence the repeating 6,5,4,3,2,1,0,0 delay pattern. The
+  literature quotes the window's start as 14335 T-states after the interrupt,
+  one T-state before the first display byte; here it is stated directly in
+  frame T-states, because that - not the interrupt - is what the video code
+  clocks the raster from. The two agree by construction: with INTLine set so
+  the interrupt leads the screen by the hardware's 14336 T-states, the first
+  contended T-state is exactly 14335 after it.
+
+  Granularity caveat: the Z80 core only advances CPU.cycles between
+  instructions (z80_run does self->cycles += insn_table[...], and the READ /
+  WRITE macros wrap the callbacks in no accounting of their own), so Moment is
+  the T-state at which the *instruction* started, not the individual M-cycle.
+  The M1 fetch is therefore placed exactly and later accesses in the same
+  instruction up to ~15 T-states early. Correcting that needs per-M-cycle
+  offsets the callbacks don't carry. }
+procedure TZXSpectrum48.Contention; inline;
+const
+  WaitStates: array[0..7] of Integer = (6, 5, 4, 3, 2, 1, 0, 0);
+  { One T-state before the first display byte of the first screen line. }
+  FirstContendedT = (FirstScreenLine * ScanlineTStates) - 1;
+  LastContendedT = FirstContendedT + (ScreenLines * ScanlineTStates) - 1;
+var
+  Moment: Integer;
+begin
+  Moment := Cycles + CPU.cycles;
+  if not InRange(Moment, FirstContendedT, LastContendedT) then Exit;
+  Moment := (Moment - FirstContendedT) mod ScanlineTStates;
+  if Moment < DisplayTStates then Wait(WaitStates[Moment mod 8]);
+end;
+
 function TZXSpectrum48.OnMemoryRead(AAddress: Word): Byte; inline;
 begin
   Result := if AAddress < $4000
     then ROM[AAddress]
     else RAM[AAddress];
 
-  if Contended and InRange(AAddress, $4000, $7FFF) then Wait(2);
+  if InRange(AAddress, $4000, $7FFF) then Contention;
 end;
 
 procedure TZXSpectrum48.OnMemoryWrite(AAddress: Word; AValue: Byte); inline;
 begin
   if AAddress >= $4000 then RAM[AAddress] := AValue;
-  if Contended and InRange(AAddress, $4000, $7FFF) then Wait(2);
+  if InRange(AAddress, $4000, $7FFF) then Contention;
 end;
 
 function TZXSpectrum48.OnIORead(AAddress: Word): Byte;
@@ -532,28 +581,32 @@ end;
 
 procedure TZXSpectrum48.RunScanline; inline;
 const
-  INTLine = 295; { Has to be 64 line times before the first byte
-                   of the screen (16384) is displayed. }
+  { Has to be 64 line times - the hardware's 14336 T-states - before the first
+    byte of the screen (16384) is displayed, which puts it 64 lines ahead of
+    FirstScreenLine, wrapping around the end of the frame. }
+  INTLine = FirstScreenLine + TotalScanlines - 64;
+  { How long /INT is held low. }
+  INTPulseTStates = 32;
 begin
   case FCurrentScanline of
-    47..239:
+    FirstScreenLine..FirstScreenLine + ScreenLines - 1:
       begin
         FContended := True;
-        Tick(128);
+        Tick(DisplayTStates);
         FContended := False;
-        Tick(96);
+        Tick(ScanlineTStates - DisplayTStates);
       end;
 
     INTLine:
       begin
         INT := True;
-        Tick(32);
+        Tick(INTPulseTStates);
         INT := False;
-        Tick(192);
+        Tick(ScanlineTStates - INTPulseTStates);
     end;
 
   else
-    Tick(224);
+    Tick(ScanlineTStates);
   end;
 
   Inc(FCurrentScanline);
