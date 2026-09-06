@@ -24,8 +24,9 @@ function UserDataDir: String;
 implementation
 
 uses
-  SysUtils, System.IOUtils
-  {$ifdef mswindows}, Windows{$endif};
+  {$ifdef mswindows} Windows, MMSystem, {$endif}
+  SysUtils, System.IOUtils,
+  AppSettings;
 
 var
   { Settled once: the answer cannot change while the emulator runs, and the
@@ -112,12 +113,32 @@ begin
     SetProcessInformation(GetCurrentProcess, ProcessPowerThrottling,
       @State, SizeOf(State));
 end;
-
-initialization
-  Pointer(SetProcessInformation) :=
-    GetProcAddress(GetModuleHandle('kernel32'), 'SetProcessInformation');
-  KeepTimerResolution;
 {$endif}
 
+procedure DelaySleep(ASeconds: Double); cdecl;
+begin
+  Sleep(Trunc(ASeconds * 1000));
+end;
+
+initialization
+  {$ifdef mswindows}
+    Pointer(SetProcessInformation) :=
+      GetProcAddress(GetModuleHandle('kernel32'), 'SetProcessInformation');
+    KeepTimerResolution;
+  {$endif}
+
+  if Settings.System.DelayDriver = ddSleep then
+  begin
+    Delay := @DelaySleep;
+    {$ifdef mswindows}
+      timeBeginPeriod(1);
+    {$endif}
+  end;
+
+finalization
+  {$ifdef mswindows}
+    if Settings.System.DelayDriver = ddSleep then
+      timeEndPeriod(1);
+  {$endif}
 end.
 

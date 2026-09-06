@@ -5,14 +5,18 @@ unit AppSettings;
 interface
 
 uses
-  Classes, SysUtils, IniFiles, FGL, System.IOUtils,
+  Classes, SysUtils, IniFiles, System.IOUtils,
   Raylib, Utils, Joysticks;
+
+const
+  SettingsFile = 'spec.conf';
 
 type
   TDelayDriver = (
     ddNone = 0,  { No delay between frames, unless forced externally by the OS/platform }
     ddDefault,  { Raylib's WaitTime, no VSync }
-    ddVSync  { VSync only; will produce incorrect timings unless the screen is locked at 50Hz }
+    ddVSync, { VSync only; will only produce correct timings if the screen is locked at 50Hz }
+    ddSleep  { Sleep }
   );
 
   TAppSettings = class
@@ -85,6 +89,7 @@ begin
     'default', '': Result := ddDefault;
     'none': Result := ddNone;
     'vsync': Result := ddVSync;
+    'sleep': Result := ddSleep;
   else
     raise Exception.CreateFmt('Invalid DelayDriver value: "%s"', [AValue]);
   end;
@@ -96,6 +101,7 @@ begin
     ddDefault: Result := 'Default';
     ddNone: Result := 'None';
     ddVSync: Result := 'VSync';
+    ddSleep: Result := 'Sleep';
   end;
 end;
 
@@ -251,7 +257,7 @@ begin
 end;
 
 initialization
-  Settings := TAppSettings.Create(TPath.Combine(UserDataDir, 'spec.conf'));
+  Settings := TAppSettings.Create(TPath.Combine(UserDataDir, SettingsFile));
   Settings.Load;
 
 finalization
