@@ -71,6 +71,11 @@ type
     FSaveName: String;
     procedure ArmSave;
     procedure Contention;
+    function ContentionDelay(AMoment: Integer): Integer;
+    procedure ContendedStep(var AMoment: Integer; ATStates: Integer);
+    function IOCycleStart: Integer;
+    procedure ContendPortEarly(APort: Word; var AMoment: Integer);
+    procedure ContendPortLate(APort: Word; var AMoment: Integer);
     function GetJoystick: TJoystick;
     function GetJoystickName: String;
     function LoadFromWave(const Wave: TWave): Boolean;
@@ -329,19 +334,127 @@ end;
   The M1 fetch is therefore placed exactly and later accesses in the same
   instruction up to ~15 T-states early. Correcting that needs per-M-cycle
   offsets the callbacks don't carry. }
-procedure TZXSpectrum48.Contention; inline;
+{ T-states the ULA holds the bus against a CPU access begun at AMoment, or 0
+  when the bus is free. This is the delay the literature quotes as starting
+  14335 T-states after the interrupt, stated here in frame T-states because
+  that - not the interrupt - is what the video code clocks the raster from.
+  The two agree by construction: with INTLine set so the interrupt leads the
+  screen by the hardware's 14336 T-states, the first contended T-state is
+  exactly 14335 after it. }
+function TZXSpectrum48.ContentionDelay(AMoment: Integer): Integer; inline;
 const
   WaitStates: array[0..7] of Integer = (6, 5, 4, 3, 2, 1, 0, 0);
   { One T-state before the first display byte of the first screen line. }
   FirstContendedT = (FirstScreenLine * ScanlineTStates) - 1;
   LastContendedT = FirstContendedT + (ScreenLines * ScanlineTStates) - 1;
 var
-  Moment: Integer;
+  Phase: Integer;
 begin
-  Moment := Cycles + CPU.cycles;
-  if not InRange(Moment, FirstContendedT, LastContendedT) then Exit;
-  Moment := (Moment - FirstContendedT) mod ScanlineTStates;
-  if Moment < DisplayTStates then Wait(WaitStates[Moment mod 8]);
+  Result := 0;
+  if not InRange(AMoment, FirstContendedT, LastContendedT) then Exit;
+  Phase := (AMoment - FirstContendedT) mod ScanlineTStates;
+  if Phase < DisplayTStates then Result := WaitStates[Phase mod 8];
+end;
+
+{ ULA memory contention. While the ULA is fetching a screen line it owns the
+  bus for the first 128 T-states of that line, and a CPU access to $4000-$7FFF
+  landing in that window is stalled until the ULA next lets go - which it does
+  every 8 T-states, hence the repeating 6,5,4,3,2,1,0,0 delay pattern.
+
+  Granularity caveat: the Z80 core only advances CPU.cycles between
+  instructions (z80_run does self->cycles += insn_table[...], and the READ /
+  WRITE macros wrap the callbacks in no accounting of their own), so the
+  moment is the T-state at which the *instruction* started, not the individual
+  M-cycle. The M1 fetch is therefore placed exactly and later accesses in the
+  same instruction up to ~15 T-states early. Correcting that needs per-M-cycle
+  offsets the callbacks don't carry - the one place it can be reconstructed is
+  the I/O M-cycle, which IOCycleStart does from the opcode. }
+procedure TZXSpectrum48.Contention; inline;
+begin
+  Wait(ContentionDelay(Cycles + CPU.cycles));
+end;
+
+{ One "C:x" step of the contended-I/O patterns: the ULA stops the CPU's clock
+  for as long as it holds the bus, and the access then runs for ATStates.
+  Only the stall is charged to the CPU here - the M-cycle's own T-states are
+  already part of the instruction length the core will add when it returns -
+  but AMoment carries both, since it tracks wall-clock position in the frame. }
+procedure TZXSpectrum48.ContendedStep(var AMoment: Integer; ATStates: Integer);
+var
+  Delay: Integer;
+begin
+  Delay := ContentionDelay(AMoment);
+  Wait(Delay);
+  Inc(AMoment, Delay + ATStates);
+end;
+
+{ Frame T-state at which the running instruction's 4 T-state I/O M-cycle
+  begins. CPU.cycles is only advanced between instructions (see Contention),
+  so the offset has to come from the opcode: CPU.data[0] is the opcode the
+  core is executing and CPU.data[1] the sub-opcode after an $ED prefix. The
+  four layouts, all ending in or containing one I/O M-cycle:
+
+    IN A,(n) / OUT (n),A     M1 4, operand 3, I/O 4         = 11
+    IN r,(C) / OUT (C),r     M1 4, M1 4, I/O 4              = 12
+    INI / IND / INIR / INDR  M1 4, M1 5, I/O 4, write 3     = 16
+    OUTI / OUTD / OTIR/OTDR  M1 4, M1 5, read 3, I/O 4      = 16
+
+  An I/O instruction executed straight off the data bus in IM 0 has no opcode
+  in CPU.data and lands on the 7 T-state default; nothing on a 48K drives the
+  bus during an interrupt acknowledge, so that case does not arise here. }
+function TZXSpectrum48.IOCycleStart: Integer; inline;
+var
+  Offset: Integer;
+begin
+  if CPU.data[0] <> $ED then
+    Offset := 7
+  else if CPU.data[1] in [$A2, $AA, $B2, $BA] then  { ini, ind, inir, indr }
+    Offset := 9
+  else if CPU.data[1] in [$A3, $AB, $B3, $BB] then  { outi, outd, otir, otdr }
+    Offset := 12
+  else
+    Offset := 8;
+
+  Result := Cycles + CPU.cycles + Offset;
+end;
+
+{ Contended I/O, first T-state of the M-cycle. The Z80 puts the port address
+  on the address bus exactly as it does a memory address, so an address the
+  ULA owns stalls the CPU even when the ULA's own port is not the one being
+  addressed - which is why IN A,($FE) with $7F in A (a keyboard half-row read,
+  port $7FFE) contends while the same read through $FE7E does not. }
+procedure TZXSpectrum48.ContendPortEarly(APort: Word; var AMoment: Integer);
+begin
+  if InRange(APort, $4000, $7FFF)
+    then ContendedStep(AMoment, 1)   { C:1 }
+    else Inc(AMoment);               { N:1 }
+end;
+
+{ Contended I/O, remaining three T-states. Together with ContendPortEarly this
+  is the whole of the wiki's table:
+
+    High byte $40-$7F?  Low bit  Pattern
+    No                  Reset    N:1, C:3
+    No                  Set      N:4
+    Yes                 Reset    C:1, C:3
+    Yes                 Set      C:1, C:1, C:1, C:1 }
+procedure TZXSpectrum48.ContendPortLate(APort: Word; var AMoment: Integer);
+var
+  I: Integer;
+begin
+  if APort.Bits[0] then
+    if InRange(APort, $4000, $7FFF) then
+      { Neither cancellation mechanism fires - not the one for memory
+        requests, since this is not one, nor the one for ULA port access,
+        since the ULA's port is not being addressed - so every T-state of the
+        access is treated as if it were the first of a memory access. }
+      for I := 1 to 3 do ContendedStep(AMoment, 1)   { C:1, C:1, C:1 }
+    else
+      Inc(AMoment, 3)                                { N:3 }
+  else
+    { The ULA's own port: it stops the clock once, then releases for the rest
+      of the M-cycle. }
+    ContendedStep(AMoment, 3);                       { C:3 }
 end;
 
 function TZXSpectrum48.OnMemoryRead(AAddress: Word): Byte; inline;
@@ -360,12 +473,19 @@ begin
 end;
 
 function TZXSpectrum48.OnIORead(AAddress: Word): Byte;
+var
+  Moment: Integer;
 begin
+  { The device is read between the two halves of the M-cycle, so anything
+    timing-sensitive off this read - the tape's EAR level above all - sees the
+    stall the ULA has already imposed. }
+  Moment := IOCycleStart;
+  ContendPortEarly(AAddress, Moment);
+
   Result := $FF;
 
   if not AAddress.Bits[0] then
   begin
-    if Contended then Wait(2);
     Result := Result and Keyboard.Poll(AAddress);
     if (Joystick is TKeySimulatorJoystick) then
       Result := Result and Joystick.Poll(AAddress);
@@ -387,23 +507,32 @@ begin
         while polling an absent joystick.
         Revise if another device needs to be added on an odd-numbered port. }
       Result := Result and $C0;
+
+  ContendPortLate(AAddress, Moment);
 end;
 
 procedure TZXSpectrum48.OnIOWrite(AAddress: Word; AValue: Byte); inline;
 var
   NewIndex: TZXColorIndex;
+  Moment: Integer;
 begin
+  Moment := IOCycleStart;
+  ContendPortEarly(AAddress, Moment);
+
   case AAddress.Bytes[0] of
     $FE:
       begin
         NewIndex := AValue and %111;
+        { Moment, not the instruction's first T-state: the ULA latches this
+          inside the write M-cycle, seven or more T-states later, and the
+          border painter turns the difference into fourteen-odd pixels. }
         if Assigned(BorderChange) and (BorderColorIndex <> NewIndex) then
-          BorderChange(NewIndex, Cycles + CPU.cycles);
+          BorderChange(NewIndex, Moment);
 
         BorderColorIndex := NewIndex;
         { Flush the audio bucket before either pin moves - this same write is
           the only thing that can move them. }
-        if Assigned(AdvanceAudio) then AdvanceAudio(Cycles + CPU.cycles);
+        if Assigned(AdvanceAudio) then AdvanceAudio(Moment);
         AudioPin := AValue.Bits[4];
 
         if AValue.Bits[3] <> MicPin then
@@ -413,6 +542,8 @@ begin
         end;
       end;
   end;
+
+  ContendPortLate(AAddress, Moment);
 end;
 
 function TZXSpectrum48.OnHook(AAddress: Word): Byte;
