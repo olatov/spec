@@ -7,7 +7,7 @@
  * Collect every gem to open the exit, then reach it before the
  * clock runs out.  Each level is a freshly generated maze.
  *
- * Build the tape image with:
+ * Build the tape image with pasta80 (https://github.com/pleumann/pasta80):
  *   pasta --zx48 --tap --opt --release maze.pas
  *)
 program Maze;
@@ -252,7 +252,7 @@ begin
       if T <> Last then
       begin
         case T of
-          TWall:  begin TextBackground(Red); TextColor(Yellow) end;
+          TWall:  begin TextBackground(Red); TextColor(White) end;
           TGem:   begin TextBackground(Black); TextColor(Cyan) end;
           TExit:  begin TextBackground(Magenta); TextColor(Black) end;
           TFloor: begin TextBackground(Black); TextColor(White) end;
@@ -290,7 +290,7 @@ begin
 
   GotoXY(3, 7);  TextColor(White);
   Write('Collect every ');
-  TextColor(Yellow); Write(GemChar);
+  TextColor(Cyan); Write(GemChar);
   TextColor(White); Write(' to open the');
   GotoXY(3, 8);  Write('exit, then reach it before');
   GotoXY(3, 9);  Write('the clock runs out.');
