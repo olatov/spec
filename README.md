@@ -135,6 +135,34 @@ Batty,batty.tap
 Put each `file` in the same folder. An optional screenshot with the same base
 name (`arkanoid.png`) is shown in the preview pane.
 
+### Where the catalog is looked for
+
+`[Files] CatalogPath` in `spec.conf` names the folder outright:
+
+```ini
+[Files]
+CatalogPath=~/Games/Spectrum/catalog
+```
+
+A leading `~` is expanded; the path is otherwise taken at its word, and nothing
+else is tried — so a typo shows up as an empty catalog rather than a different
+one quietly loading in its place.
+
+Left unset, the folder is looked for in the working directory first, then next
+to the binary. On macOS a bundle adds two more places, since the binary itself
+is buried in `spec.app/Contents/MacOS/`:
+
+| Where | For |
+| --- | --- |
+| Next to `spec.app` | A catalog the player can add games to |
+| `spec.app/Contents/Resources/catalog/` | A catalog shipped inside the app |
+
+Outside beats inside, so a catalog next to the bundle overrides one shipped
+within it. A catalog in `Contents/Resources/` is covered by the code signature
+— which is what stops the player adding to it, and means it has to be in place
+before `macos-bundle.sh` signs. Running with `LogLevel=0` prints which one was
+picked.
+
 ## Where files are written
 
 Snapshots, taped programs, screenshots and `spec.conf` all go to the same
@@ -171,6 +199,10 @@ Curvature=8
 Volume=0.65
 Muted=0
 
+[Files]
+SavePath=         ; empty = the default write folder; ~ is expanded
+CatalogPath=      ; empty = search the usual places
+
 [Joystick]
 Index=1           ; 0=none, then Kempston, Cursor, Sinclair, Spanish
 
@@ -205,21 +237,6 @@ opens it at runtime — and it is looked for, in order, at `$LIBZ80_PATH`, then
 `./` and `./lib/` relative to the working directory, then the same two next to
 the executable, and on macOS in the bundle's `Contents/Frameworks/`. Keeping it
 beside the executable covers every case.
-
-### macOS app bundle
-
-`source/macos-bundle.sh` builds both architectures, joins them with `lipo`,
-and assembles `spec.app` with the dylib in `Contents/Frameworks/` — the one
-place codesign will seal as nested code:
-
-```sh
-./macos-bundle.sh                 # ad-hoc signed
-SIGN_ID="Developer ID Application: Your Name (TEAMID)" ./macos-bundle.sh
-```
-
-Pass `--no-compile` to re-assemble from the binaries already built. The ROM,
-shaders and fonts are compiled into the executable, so the dylib is the only
-file the bundle has to carry.
 
 ## Project layout
 

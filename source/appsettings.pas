@@ -54,6 +54,8 @@ type
     Files: record
       SavePath: String;
       BrowsePath: String;
+      { Empty means "look in the usual places" - see Catalogs.LoadCatalog. }
+      CatalogPath: String;
     end;
     Joystick: record
       { Which of the machine's joystick interfaces is plugged in. What works
@@ -164,8 +166,9 @@ begin
 
   with Files do
   begin
-    SavePath := F.ReadString('Files', 'SavePath', '');
+    SavePath := ExpandUserPath(F.ReadString('Files', 'SavePath', ''));
     BrowsePath := SavePath;
+    CatalogPath := ExpandUserPath(F.ReadString('Files', 'CatalogPath', ''));
   end;
 
   Joystick.Index := F.ReadInteger('Joystick', 'Index', 1);

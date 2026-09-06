@@ -1048,6 +1048,8 @@ begin
 
   SetTraceLogLevel(Settings.System.LogLevel);
   TraceLog(LOG_INFO, PChar($'Conf file: {Settings.Filename}'));
+  LoadCatalog(Settings.Files.CatalogPath);
+  TraceLog(LOG_INFO, PChar($'Catalog: {CatalogDir}'));
   TraceLog(LOG_INFO, PChar($'Delay driver: {Settings.DelayDriverToString(Settings.System.DelayDriver)}'));
 
   if not LoadLibZ80 then

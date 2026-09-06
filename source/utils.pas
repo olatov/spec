@@ -21,12 +21,37 @@ var
   SPEC_DATA_DIR overrides both. }
 function UserDataDir: String;
 
+{ Expands a leading ~ in a path typed into spec.conf. Nothing else is touched:
+  a relative path stays relative, so 'catalog' still means what it says. }
+function ExpandUserPath(const APath: String): String;
+
 implementation
 
 uses
   {$ifdef mswindows} Windows, MMSystem, {$endif}
   SysUtils, System.IOUtils,
   AppSettings;
+
+function ExpandUserPath(const APath: String): String;
+var
+  Home: String;
+begin
+  Result := APath;
+  if Result = '' then Exit;
+  if Result[1] <> '~' then Exit;
+
+  { ~ on its own, or ~/something. Resolving ~someone-else is the shell's job
+    and guessing at it would only turn a typo into a wrong folder. }
+  if (Length(Result) > 1) and (Result[2] <> '/') then Exit;
+
+  Home := GetEnvironmentVariable('HOME');
+  {$ifdef mswindows}
+  if Home = '' then Home := GetEnvironmentVariable('USERPROFILE');
+  {$endif}
+  if Home = '' then Exit;
+
+  Result := SetDirSeparators(Home + Copy(Result, 2, Length(Result)));
+end;
 
 var
   { Settled once: the answer cannot change while the emulator runs, and the

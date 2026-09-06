@@ -67,6 +67,14 @@ type
   and this unit stays out of the business of loading files. }
 function AddCatalogPage(AParent: TMenuItem; AOnOpen: TMenuItemNotify): TCatalogMenuItem;
 
+{ Finds the catalog and loads it. APath is [Files] CatalogPath from spec.conf;
+  an empty one means "look in the usual places".
+
+  This is a call rather than something the unit does to itself on the way up,
+  because the answer depends on the settings and there is no saying which unit
+  initializes first. }
+procedure LoadCatalog(const APath: String);
+
 var
   Catalog: TCatalog;
   CatalogDir: String;   { resolved at startup - see the initialization }
@@ -374,20 +382,75 @@ begin
   Result := 'ENTER - Load    ESC - Back';
 end;
 
-initialization
-  Catalog := TCatalog.Create;
+{$ifndef EMBED_CATALOG}
+{ Run from the project folder the catalog is simply there; run from anywhere
+  else - a launcher, a shortcut - it sits next to the binary instead.
 
+  A macOS bundle puts two more places in the way, because the binary is buried
+  in spec.app/Contents/MacOS and "next to the binary" is somewhere no player
+  will ever open. What they see is the bundle, so a catalog they can add to
+  goes beside that, three levels up. One shipped inside the app goes in
+  Contents/Resources, where the signature covers it - which is also why it is
+  looked at last: sealed means the player cannot add a game to it, so anything
+  they put outside should win. }
+function ResolveCatalogDir(const AConfigured: String): String;
+var
+  Candidates: array of String;
+  Candidate, AppDir: String;
+
+  procedure Consider(const APath: String);
+  begin
+    Insert(APath, Candidates, Integer.MaxValue);
+  end;
+
+begin
+  { A folder named in spec.conf is taken at its word and nothing else is tried:
+    a path with a typo in it should show up as an empty catalog, not as a
+    different one quietly loading in its place. }
+  if not AConfigured.IsEmpty then Exit(AConfigured);
+
+  Candidates := Nil;
+  AppDir := ExcludeTrailingPathDelimiter(GetApplicationDirectory);
+
+  Consider(CatalogFolder);
+  Consider(TPath.Combine(AppDir, CatalogFolder));
+
+  {$ifdef darwin}
+  { Only when the binary really is inside a bundle - the same three levels up
+    from a loose one would land on the root of the disk. }
+  if TPath.GetFileName(AppDir) = 'MacOS' then
+  begin
+    Consider(TPath.Combine(
+      ExpandFileName(TPath.Combine(AppDir, '../../..')), CatalogFolder));
+    Consider(TPath.Combine(
+      ExpandFileName(TPath.Combine(AppDir, '../Resources')), CatalogFolder));
+  end;
+  {$endif}
+
+  for Candidate in Candidates do
+    if TFile.Exists(TPath.Combine(Candidate, CatalogFile)) then Exit(Candidate);
+
+  { Nothing anywhere. The working folder is the answer the emulator has always
+    given, and LoadFromFile finding nothing there leaves the catalog empty -
+    which the menu already knows how to show. }
+  Result := CatalogFolder;
+end;
+{$endif}
+
+procedure LoadCatalog(const APath: String);
+begin
   {$ifdef EMBED_CATALOG}
     Catalog.LoadEmbedded;
   {$else}
-    { Run from the project folder the catalog is simply there; run from anywhere
-      else - a launcher, a shortcut - it sits next to the binary instead. }
-    CatalogDir := CatalogFolder;
-    if not TFile.Exists(TPath.Combine(CatalogDir, CatalogFile)) then
-      CatalogDir := TPath.Combine(GetApplicationDirectory, CatalogFolder);
-
+    { Everything else the catalog reads - the games, the screenshots - is built
+      from CatalogDir, so this is the only place that has to know. }
+    CatalogDir := ResolveCatalogDir(APath);
     Catalog.LoadFromFile(TPath.Combine(CatalogDir, CatalogFile));
   {$endif}
+end;
+
+initialization
+  Catalog := TCatalog.Create;
 
 finalization
   FreeAndNil(Catalog);
