@@ -16,11 +16,11 @@ straight into a full-screen Spectrum.
 - **Accurate Z80 core** — built on the
   [Z80](https://github.com/redcode/Z80) CPU library by Manuel Sainz de Baranda y
   Goñi, via Pascal bindings by Zoran Vučenović.
-- **Faithful ULA emulation** — memory-contention timing, mid-fram border-colour effects.
+- **Faithful ULA emulation** — memory-contention timing, mid-frame border-color effects.
   - **Direct-pixel video** — the Spectrum bitmap is written straight into the
   frame buffer through an attribute lookup table, then scales up to any window size.
 - **CRT / display modes** (F11 to cycle):
-  - Colour CRT — curvature, scanlines, phosphor glow
+  - Color CRT — curvature, scanlines, phosphor glow
   - Black & white CRT
   - Modern (smooth) and Modern (sharp)
   - Modern (scaleFX) — pixel-art upscaling
@@ -55,8 +55,8 @@ This is a focused 48K emulator. It deliberately leaves out:
 
 ## First run: unsigned builds
 
-The binaries are **not code-signed or notarized**, so Windows and macOS will
-refuse to launch them until you say otherwise. Nothing is wrong with the
+The released binaries are **not code-signed or notarized**, so Windows and macOS
+will refuse to launch them until you say otherwise. Nothing is wrong with the
 download — the operating system simply has no certificate to check it against.
 If you would rather not bypass the warning, [build from source](#building)
 instead; a binary you compile yourself is not quarantined.
