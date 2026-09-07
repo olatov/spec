@@ -1656,6 +1656,11 @@ var
   Requested: Boolean;
   FrameTime: Double = 0;
   Delta: Double;
+  AutomationRecording: String = '';
+  AutomationPlayback: String = '';
+  Automation: TAutomationEventList;
+  ApplicationFrame: QWord = 0;
+  AutomationFrame: QWord = 0;
 {$if defined (unix) and defined(PLATFORM_DRM)}
   const
     FlushInterval = 300.0;
@@ -1707,6 +1712,18 @@ begin
   if Settings.System.DelayDriver = ddDefault then
     FrameTime := GetTime;
 
+  AutomationRecording := GetEnvironmentVariable('RECORD_AUTOMATION').Trim;
+  AutomationPlayback := GetEnvironmentVariable('PLAY_AUTOMATION').Trim;
+
+  if not AutomationRecording.IsEmpty then
+  begin
+    Automation := LoadAutomationEventList(Nil);
+    SetAutomationEventList(@Automation);
+    StartAutomationEventRecording;
+  end
+  else if not AutomationPlayback.IsEmpty then
+    Automation := LoadAutomationEventList(PChar(SetDirSeparators(AutomationPlayback)));
+
   while not (WindowShouldClose or QuitRequested) do
   begin
     { The one-shot warm-up prime (see above). Skipped while the menu holds the
@@ -1718,7 +1735,16 @@ begin
       if not Paused and not Muted then PrimeAudio;
     end;
 
+    if not AutomationPlayback.IsEmpty and (AutomationFrame < Automation.count) then
+      while Automation.events[AutomationFrame].frame = ApplicationFrame do
+      begin
+        PlayAutomationEvent(Automation.events[AutomationFrame]);
+        Inc(AutomationFrame);
+      end;
+
     RunFrame;
+
+    Inc(ApplicationFrame);
 
     {$if defined(unix) and defined(PLATFORM_DRM)}
       { On the DRM console the keys pressed here also pile up in the tty's own
@@ -1762,6 +1788,16 @@ begin
   end;
 
   StopAudioStream(AudioStream);
+
+  if not GetEnvironmentVariable('RECORD_AUTOMATION').IsEmpty then
+  begin
+    StopAutomationEventRecording;
+    ExportAutomationEventList(Automation, PChar(SetDirSeparators(GetEnvironmentVariable('RECORD_AUTOMATION'))));
+    UnloadAutomationEventList(Automation);
+  end;
+
+   if not AutomationPlayback.IsEmpty then
+     UnloadAutomationEventList(Automation);
 
   {$if defined(unix) and defined(PLATFORM_DRM)}
     TCFlush(StdInputHandle, TCIFLUSH);
