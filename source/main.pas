@@ -1661,6 +1661,8 @@ var
   Automation: TAutomationEventList;
   ApplicationFrame: QWord = 0;
   AutomationFrame: QWord = 0;
+  QuitFrame: TNullable<QWord>;
+  Value: QWord;
 {$if defined (unix) and defined(PLATFORM_DRM)}
   const
     FlushInterval = 300.0;
@@ -1724,6 +1726,11 @@ begin
   else if not AutomationPlayback.IsEmpty then
     Automation := LoadAutomationEventList(PChar(SetDirSeparators(AutomationPlayback)));
 
+  if QWord.TryParse(GetEnvironmentVariable('QUIT_FRAME'), Value) then
+    QuitFrame := Value
+  else
+    QuitFrame := Null;
+
   while not (WindowShouldClose or QuitRequested) do
   begin
     { The one-shot warm-up prime (see above). Skipped while the menu holds the
@@ -1734,6 +1741,9 @@ begin
       FAudioWarmup := 0;
       if not Paused and not Muted then PrimeAudio;
     end;
+
+    if QuitFrame.HasValue and (ApplicationFrame = QuitFrame.Value) then
+      QuitRequested := True;
 
     if not AutomationPlayback.IsEmpty and (AutomationFrame < Automation.count) then
       while Automation.events[AutomationFrame].frame = ApplicationFrame do
