@@ -7,7 +7,7 @@ interface
 
 uses
   {$ifdef mswindows} Windows, {$endif}
-  Classes, SysUtils, Math, CTypes, System.IOUtils, Nullable,
+  Classes, SysUtils, Math, CTypes, System.IOUtils, Nullable, FGL,
   Raylib, RayMath,
   Utils,
   Z80, Spectrum, OSDMenu, Keyboards, Inputs, Joysticks, Catalogs, AppSettings;
@@ -1661,8 +1661,10 @@ var
   Automation: TAutomationEventList;
   ApplicationFrame: QWord = 0;
   AutomationFrame: QWord = 0;
+  ScreenshotFrames: TFPGList<QWord> = Nil;
   QuitFrame: TNullable<QWord>;
   Value: QWord;
+  S: String;
 {$if defined (unix) and defined(PLATFORM_DRM)}
   const
     FlushInterval = 300.0;
@@ -1731,6 +1733,13 @@ begin
   else
     QuitFrame := Null;
 
+  if not GetEnvironmentVariable('SCREENSHOT_FRAMES').IsEmpty then
+  begin
+    ScreenshotFrames := autofree TFPGList<QWord>.Create;
+    for S in GetEnvironmentVariable('SCREENSHOT_FRAMES').Split(',') do
+      ScreenshotFrames.Add(QWord.Parse(S));
+  end;
+
   while not (WindowShouldClose or QuitRequested) do
   begin
     { The one-shot warm-up prime (see above). Skipped while the menu holds the
@@ -1744,6 +1753,9 @@ begin
 
     if QuitFrame.HasValue and (ApplicationFrame = QuitFrame.Value) then
       QuitRequested := True;
+
+    if Assigned(ScreenshotFrames) and (ScreenshotFrames.IndexOf(ApplicationFrame) >= 0) then
+      ExportImage(Image, TextFormat('frame_%d.png', ApplicationFrame));
 
     if not AutomationPlayback.IsEmpty and (AutomationFrame < Automation.count) then
       while Automation.events[AutomationFrame].frame = ApplicationFrame do
