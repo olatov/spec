@@ -27,11 +27,23 @@ type
 
   TBorderChangeNotify = procedure(AIndex: TZXColorIndex; ACycles: Integer) of object;
 
+  { Where an opcode fetch sits inside an instruction. A prefix byte is an M1
+    cycle of its own, so the fetch after it continues the instruction rather
+    than starting one - which is what tells the two apart. }
+  TPrefixState = (psNone, psCB, psED, psXY);
+
   TZXSpectrum48 = class
   private
     FBorderColorIndex: TZXColorIndex;
     FContended: Boolean;
     FCurrentScanline: Integer;
+    { Bookkeeping for the running instruction, used only to find the T-states
+      it spends off the bus - see ContendInternal. }
+    FInsnStart: Integer;         { frame T-state of its first M1 }
+    FInsnBus: Integer;           { T-states its bus M-cycles account for }
+    FInsnWait: Integer;          { T-states the ULA has already stalled it }
+    FInsnOpen: Boolean;          { an instruction is in flight }
+    FPrefix: TPrefixState;
     FCycles: QWord;
     FFlashPhase: Boolean;
     FOvershoot: Integer;
@@ -71,6 +83,8 @@ type
     FSaveName: String;
     procedure ArmSave;
     procedure Contention;
+    procedure ContendInternal(AMoment: Integer);
+    procedure OpenInstruction(ABusTStates: Integer);
     function ContentionDelay(AMoment: Integer): Integer;
     procedure ContendedStep(var AMoment: Integer; ATStates: Integer);
     function IOCycleStart: Integer;
@@ -122,6 +136,7 @@ type
     property Joystick: TJoystick read GetJoystick;
     property JoystickName: String read GetJoystickName;
     procedure SwitchJoystick;
+    function OnOpcodeFetch(AAddress: Word): Byte;
     function OnMemoryRead(AAddress: Word): Byte;
     procedure OnMemoryWrite(AAddress: Word; AValue: Byte);
     function OnIORead(AAddress: Word): Byte;
@@ -227,23 +242,58 @@ const
 
   EarBit = %01000000;
 
+{ Operand and data reads. Three T-states of bus time each, which is what
+  separates them from the T-states ContendInternal is after. }
 function FetchCallback(Context: Pointer; Address: UInt16): UInt8; cdecl;
 begin
-  Result := TZXSpectrum48(Context).OnMemoryRead(Address);
+  with TZXSpectrum48(Context) do
+  begin
+    Inc(FInsnBus, 3);
+    Result := OnMemoryRead(Address);
+  end;
+end;
+
+{ The M1 cycles, and only those: the opcode itself and any prefix bytes ahead
+  of it. Kept off FetchCallback because an M1 is four T-states rather than
+  three and because the first one of an instruction opens the bookkeeping. }
+function FetchOpcodeCallback(Context: Pointer; Address: UInt16): UInt8; cdecl;
+begin
+  Result := TZXSpectrum48(Context).OnOpcodeFetch(Address);
 end;
 
 procedure WriteCallback(Context: Pointer; Address: UInt16; Value: UInt8); cdecl;
 begin
-  TZXSpectrum48(Context).OnMemoryWrite(Address, Value);
+  with TZXSpectrum48(Context) do
+  begin
+    Inc(FInsnBus, 3);
+    OnMemoryWrite(Address, Value);
+  end;
 end;
 
+{ The NMI acknowledge cycle, five T-states of it, then the two stack writes
+  the caller books - eleven in all, none of them idle. Nothing on a 48K drives
+  /NMI, so this is here for completeness. }
 function NMIACallback(Context: Pointer; address: UInt16): UInt8; cdecl;
 begin
+  with TZXSpectrum48(Context) do
+  begin
+    ContendInternal(Cycles + CPU.cycles);
+    OpenInstruction(5);
+  end;
   Result := $FF;
 end;
 
 function INTACallback(Context: Pointer; address: UInt16): UInt8; cdecl;
 begin
+  { Seven T-states of acknowledge, then IM 1's two stack writes: thirteen with
+    no idle T-state among them. Booked as an instruction of its own so the one
+    it interrupted is settled here rather than measured across the gap. }
+  with TZXSpectrum48(Context) do
+  begin
+    ContendInternal(Cycles + CPU.cycles);
+    OpenInstruction(7);
+  end;
+
   { Writeln('INTA'); }
   { /INT is deasserted on a fixed 32 T-state schedule in the main loop,
     not here - see the pulse-width model there. }
@@ -289,8 +339,16 @@ begin
 
 end;
 
+{ One of the NOPs the CPU issues while halted: a bare four T-state M1 with
+  nothing after it. Booked one at a time so a HALT that outlasts the frame is
+  not mistaken for a single instruction spending all of it off the bus. }
 function NopCallback(Context: Pointer; address: UInt16): UInt8; cdecl;
 begin
+  with TZXSpectrum48(Context) do
+  begin
+    ContendInternal(Cycles + CPU.cycles);
+    OpenInstruction(4);
+  end;
   Result := 0;
 end;
 
@@ -301,12 +359,20 @@ end;
 
 function InputCallback(Context: Pointer; Address: UInt16): UInt8; cdecl;
 begin
-  Result := TZXSpectrum48(Context).OnIORead(Address);
+  with TZXSpectrum48(Context) do
+  begin
+    Inc(FInsnBus, 4);
+    Result := OnIORead(Address);
+  end;
 end;
 
 procedure OutputCallback(Context: Pointer; Address: UInt16; Value: UInt8); cdecl;
 begin
-  TZXSpectrum48(Context).OnIOWrite(Address, Value);
+  with TZXSpectrum48(Context) do
+  begin
+    Inc(FInsnBus, 4);
+    OnIOWrite(Address, Value);
+  end;
 end;
 
 procedure TZXSpectrum48.SetPower(AValue: Boolean);
@@ -372,6 +438,63 @@ end;
 procedure TZXSpectrum48.Contention; inline;
 begin
   Wait(ContentionDelay(Cycles + CPU.cycles));
+end;
+
+{ Starts the bookkeeping for an instruction whose bus M-cycles are known to
+  account for ABusTStates so far. The moment is read after the caller's own
+  ContendInternal, so a stall charged there is already part of it. }
+procedure TZXSpectrum48.OpenInstruction(ABusTStates: Integer); inline;
+begin
+  FInsnStart := Cycles + CPU.cycles;
+  FInsnBus := ABusTStates;
+  FInsnWait := 0;
+  FInsnOpen := True;
+  FPrefix := psNone;
+end;
+
+{ Contention on the refresh address, charged when the instruction that used it
+  has finished.
+
+  A Z80 spends part of most instructions off the bus: the two T-states that
+  finish INC HL, the seven inside ADD HL,rr, the five DJNZ takes to add the
+  displacement. The address bus is not idle during them - it holds I:R, the
+  address the M1 refresh last put there - and the ULA reads the bus rather
+  than /MREQ (the same reason a port whose high byte lands in $40-$7F contends
+  though no memory is being addressed, see ContendPortEarly). So an I pointing
+  into contended memory makes the ULA stall those T-states too, and a program
+  that parks I in $40-$7F runs measurably slower for it. Only I matters, being
+  the high byte of I:R, so the $4000-$7FFF test reduces to a mask; the ROM
+  leaves I at $3F and nothing pays anything here until a program moves it.
+
+  What is charged is one stall, placed where the instruction first goes quiet -
+  after its bus M-cycles, which is where the idle run sits in every instruction
+  that ends in one. Instructions that go quiet mid-way (the T-state PUSH takes
+  before its writes, the one CALL takes before pushing) are charged at the same
+  place instead, a few T-states out; the ULA releases the bus every eight
+  T-states, so that costs a fraction of one stall against the whole run.
+
+  The instruction's length is only known once the next M1 arrives, which is
+  what settles it - the length being the distance back to its first M1, less
+  whatever the ULA has already stalled it for, and the idle T-states being
+  whatever that leaves over its bus M-cycles. }
+procedure TZXSpectrum48.ContendInternal(AMoment: Integer); inline;
+var
+  Span: Integer;
+begin
+  if not FInsnOpen then Exit;
+  FInsnOpen := False;
+
+  if (CPU.i and $C0) <> $40 then Exit;
+
+  { Nothing on a 48K runs longer than OTIR's 21 T-states, so anything outside
+    the range is not a measurement but a seam - a tape trap that ran whole
+    instructions of its own behind the hook, or a snapshot loaded mid-flight -
+    and is dropped rather than guessed at. }
+  Span := AMoment - FInsnStart - FInsnWait;
+  if not InRange(Span, 4, 23) then Exit;
+  if Span <= FInsnBus then Exit;
+
+  Wait(ContentionDelay(FInsnStart + FInsnWait + FInsnBus));
 end;
 
 { One "C:x" step of the contended-I/O patterns: the ULA stops the CPU's clock
@@ -455,6 +578,41 @@ begin
     { The ULA's own port: it stops the clock once, then releases for the rest
       of the M-cycle. }
     ContendedStep(AMoment, 3);                       { C:3 }
+end;
+
+{ The M1 cycle. Four T-states of bus time, and - unless a prefix byte is still
+  standing - the start of a new instruction, which settles the last one. }
+function TZXSpectrum48.OnOpcodeFetch(AAddress: Word): Byte; inline;
+begin
+  if FPrefix = psNone then
+  begin
+    ContendInternal(Cycles + CPU.cycles);
+    OpenInstruction(0);
+  end;
+
+  Inc(FInsnBus, 4);
+  Result := OnMemoryRead(AAddress);
+
+  { $DD/$FD may be followed by another of the same, by $ED, or by an opcode;
+    $CB after one of them ends the instruction there, its displacement and
+    operation being ordinary reads rather than M1s. After $CB or $ED the next
+    byte is always the operation itself. }
+  case FPrefix of
+    psCB, psED: FPrefix := psNone;
+    psXY:
+      case Result of
+        $DD, $FD: FPrefix := psXY;
+        $ED: FPrefix := psED;
+      else FPrefix := psNone;
+      end;
+  else
+    case Result of
+      $CB: FPrefix := psCB;
+      $ED: FPrefix := psED;
+      $DD, $FD: FPrefix := psXY;
+    else FPrefix := psNone;
+    end;
+  end;
 end;
 
 function TZXSpectrum48.OnMemoryRead(AAddress: Word): Byte; inline;
@@ -625,7 +783,7 @@ begin
   with CPU do
   begin
     fetch := @FetchCallback;
-    fetch_opcode := @FetchCallback;
+    fetch_opcode := @FetchOpcodeCallback;
     halt := @HaltCallback;
     read := @FetchCallback;
     write := @WriteCallback;
@@ -668,6 +826,8 @@ procedure TZXSpectrum48.Reset;
 begin
   FFrames := 0;
   FCycles := 0;
+  FInsnOpen := False;
+  FPrefix := psNone;
   FOvershoot := 0;
   FCurrentScanline := 0;
   FTotalTStates := 0;
@@ -693,6 +853,9 @@ end;
 procedure TZXSpectrum48.Wait(ACycles: Integer); inline;
 begin
   Inc(CPU.cycles, ACycles);
+  { Every stall the ULA imposes lands here, and ContendInternal has to take
+    them back out to recover what the instruction itself was worth. }
+  Inc(FInsnWait, ACycles);
 end;
 
 procedure TZXSpectrum48.Tick(ACycles: Integer); inline;
@@ -753,6 +916,9 @@ end;
 
 procedure TZXSpectrum48.BeginFrame;
 begin
+  { FInsnStart is a frame T-state and the frame clock restarts here, so the
+    instruction straddling the boundary is abandoned rather than rebased. }
+  FInsnOpen := False;
   FCycles := 0;
   FFrameBaseTState := FTotalTStates;
   Inc(FFrames);
